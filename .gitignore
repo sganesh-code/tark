@@ -1,5 +1,6 @@
 # sbt/Scala
 target/
+docs/
 project/target/
 project/project/target/
 .bsp/
