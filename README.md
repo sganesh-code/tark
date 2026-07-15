@@ -1,8 +1,8 @@
-# Tark: An LLM Agent Harness
+# Tark: An Educational LLM Agent Harness
 
-Tark is a high-performance, controlled, and fully inspectable LLM (Large Language Model) agent harness built in **Scala 3** using functional programming principles with **Cats Effect**, **FS2**, and **Sttp**. 
+Tark is an academic reference playground and learning implementation for **LLM Harness Engineering** built in **Scala 3** using functional programming principles with **Cats Effect**, **FS2**, and **Sttp**.
 
-Based on modern software agent research, Tark is designed as a controlled state machine: the LLM proposes reasoning and actions, but the Scala runtime owns state, tools, validation, verification, and convergence limits.
+Rather than a closed or complex production framework, Tark is designed as a transparent, highly accessible reference model. Its core purpose is to help developers, students, and AI researchers learn how to build, control, and inspect AI agent loops from scratch. Based on modern software agent research, Tark acts as a controlled state machine: the LLM proposes reasoning and actions, but the Scala runtime retains complete control over state, tools, validation, verification, and safety boundaries.
 
 ---
 
