@@ -1,37 +1,30 @@
 # Tark Architecture
 
-Tark is being organized around hexagonal architecture: domain values and
-application use cases sit at the center, ports describe boundaries, adapters
-connect external technology, and bootstrap code composes a runnable program.
+Tark is organized around a strict Hexagonal Architecture: domain values and application use cases sit at the center, ports describe boundaries, adapters connect external technology, and bootstrap code composes a runnable program.
 
-## Planned Package Map
+## Package Map
 
-| Package | Role | Current migration source |
-| --- | --- | --- |
-| `com.tark.domain` | Core domain values, state, tool descriptions, memory values, UI value objects, and ReAct state values. | `@src/main/scala/com/tark/domain` |
-| `com.tark.application` | Provider-neutral use cases, orchestration services, transition helpers, and default domain typeclass instances. | Provider-neutral logic now mixed across `@src/main/scala/com/tark/ports`, `@src/main/scala/com/tark/adapters/backend/ollama`, and model companions. |
-| `com.tark.ports.inbound` | Driving ports invoked by the CLI or other entrypoints, such as chat input, slash command dispatch, and keyboard handling. | `@src/main/scala/com/tark/ports/inbound` |
-| `com.tark.ports.outbound` | Driven ports implemented by infrastructure, such as LLM clients, sandbox execution, session persistence, trace writing, and memory summarization. | `@src/main/scala/com/tark/ports/outbound` |
-| `com.tark.adapters` | Concrete technology implementations for Ollama/STTP, Docker/local process execution, JLine terminal UI, command tools, and filesystem/session persistence. | `@src/main/scala/com/tark/adapters` plus concrete implementations currently embedded in ports. |
-| `com.tark.bootstrap` | Runtime configuration loading and composition root wiring for the CLI application. | `@src/main/scala/com/tark/bootstrap` |
+| Package | Role |
+| --- | --- |
+| `com.tark.domain` | Core domain values, state, tool descriptions, memory values, UI value objects, and ReAct state values. |
+| `com.tark.application` | Provider-neutral use cases, orchestration services, transition helpers, and default domain typeclass instances. |
+| `com.tark.ports.inbound` | Driving ports invoked by the CLI or other entrypoints, such as chat input, slash command dispatch, and keyboard handling. |
+| `com.tark.ports.outbound` | Driven ports implemented by infrastructure, such as LLM clients, sandbox execution, session persistence, trace writing, and memory summarization. |
+| `com.tark.adapters` | Concrete technology implementations for Ollama/STTP, Docker/local process execution, JLine terminal UI, command tools, and filesystem/session persistence. |
+| `com.tark.bootstrap` | Runtime configuration loading and composition root wiring for the CLI application. |
 
-## Migration Glossary
+## Architecture Glossary
 
-- **Domain:** Pure project language and state. It should be readable without
-  understanding Cats Effect, STTP, Docker, JLine, or Ollama.
-- **Application:** The provider-neutral behavior that makes Tark a controlled
-  agent harness: command routing, ReAct execution, state transitions, tracing
-  decisions, and persistence decisions.
+- **Domain:** Pure project language and state. It must be readable without understanding Cats Effect, STTP, Docker, JLine, or Ollama.
+- **Application:** The provider-neutral behavior that makes Tark a controlled agent harness: command routing, ReAct execution, state transitions, tracing decisions, and persistence decisions.
 - **Inbound port:** An API the outside world calls to drive Tark.
 - **Outbound port:** An API Tark calls to reach an external capability.
-- **Adapter:** A concrete implementation of a port using a specific library,
-  process, protocol, filesystem, terminal, or external service.
-- **Bootstrap:** The edge of the program that reads runtime configuration and
-  chooses concrete adapters.
+- **Adapter:** A concrete implementation of a port using a specific library, process, protocol, filesystem, terminal, or external service.
+- **Bootstrap:** The edge of the program that reads runtime configuration and chooses concrete adapters.
 
 ## Dependency Rules
 
-The dependency direction should point inward:
+The dependency direction must always point inward:
 
 ```text
 bootstrap -> adapters -> ports -> application -> domain
@@ -39,26 +32,13 @@ bootstrap -> application
 application -> ports
 ```
 
-These rules are the source of truth during the cleanup:
+1. `com.tark.domain` must not import `com.tark.ports`, `com.tark.adapters`, `com.tark.application`, or `com.tark.bootstrap`.
+2. `com.tark.application` may import domain values and port interfaces, but it must not import concrete adapters such as Ollama, Docker, JLine, STTP, or `scala.sys.process`.
+3. `com.tark.ports` may import domain/value types and shared typeclass shapes, but it must not instantiate adapters or read runtime configuration.
+4. `com.tark.adapters` may import ports and domain values to implement concrete behavior. Adapters should not become the owner of provider-neutral use-case orchestration.
+5. `com.tark.bootstrap` is allowed to know about every layer because it is the composition root. Runtime configuration, default givens, and concrete client selection belong here or in adapter-owned factories called from here.
 
-1. `com.tark.domain` must not import `com.tark.ports`, `com.tark.adapters`,
-   `com.tark.application`, or `com.tark.bootstrap`.
-2. `com.tark.application` may import domain values and port interfaces, but it
-   must not import concrete adapters such as Ollama, Docker, JLine, STTP, or
-   `scala.sys.process`.
-3. `com.tark.ports` may import domain/value types and shared typeclass shapes,
-   but it must not instantiate adapters or read runtime configuration.
-4. `com.tark.adapters` may import ports and domain values to implement concrete
-   behavior. Adapters should not become the owner of provider-neutral use-case
-   orchestration.
-5. `com.tark.bootstrap` is allowed to know about every layer because it is the
-   composition root. Runtime configuration, default givens, and concrete client
-   selection belong here or in adapter-owned factories called from here.
-6. Tests should mirror these boundaries: domain tests use no adapters, port law
-   tests use fakes, application tests use fake ports, and adapter tests exercise
-   concrete technology integrations.
-
-## Expected Package Shape
+## Package Shape
 
 ```text
 src/main/scala/com/tark/
@@ -101,21 +81,30 @@ src/main/scala/com/tark/
   bootstrap/
 ```
 
-## Current Boundary Violations to Fix
+## Rules Governing Code Quality
 
-The current package names partially describe a hexagonal architecture, but a few
-files cross boundaries in ways that make the structure hard to teach and evolve.
-These are the first cleanup targets:
+To ensure Tark remains an exceptional educational platform and reference implementation, every contribution must adhere to the following rules:
 
-| File | Current issue | Target owner |
-| --- | --- | --- |
-| `@src/main/scala/com/tark/ports/outbound/backend/BackendProvider.scala` | Resolved in TICKET-005: the port package contains only the `BackendProvider` contract; Ollama/STTP client construction now lives in `com.tark.bootstrap.OllamaRuntime`. | Keep provider-specific runtime wiring in `com.tark.bootstrap` or adapter-owned factories. |
-| `@src/main/scala/com/tark/ports/inbound/tool/InputProcessor.scala` | Resolved in TICKET-004: the inbound port now contains only the use-case contract, while default chat orchestration lives in `com.tark.application.chat.DefaultInputProcessor` and the provider-neutral ReAct loop lives in `com.tark.application.react.DefaultReActExecutor`. | Keep application orchestration in `com.tark.application`; keep concrete provider protocols in adapters. |
-| `@src/main/scala/com/tark/ports/outbound/memory/EpisodicMemorySummarizer.scala` | Resolved in TICKET-005: the outbound memory port contains only the summarizer contract; the default Ollama-backed summarizer is wired in `com.tark.bootstrap.OllamaRuntime`. | Keep the trait as an outbound port and runtime construction in bootstrap. |
-| `@src/main/scala/com/tark/domain/context/Context.scala` | Resolved in TICKET-002: domain `Context` no longer imports ports or defines `ContextOps`, `ToolRegistry`, or `Serializable` instances in its companion. | Keep typeclass instances in `com.tark.application.instances`; revisit whether `Context.sandbox` belongs in domain in a later model cleanup. |
-| `@src/main/scala/com/tark/ports/outbound/sandbox/Sandbox.scala` | Resolved in TICKET-006: the concrete local process sandbox moved to `com.tark.adapters.sandbox.local`, Docker sandbox code lives under `com.tark.adapters.sandbox.docker`, and the port package contains only `SandboxManager`. | Keep only sandbox boundaries in ports and concrete process/container implementations in adapters. |
+### 1. Architectural Guardrails (Hexagonal Boundary Check)
+- Dependency rules are statically validated on every test run.
+- No layer bypasses are allowed. No package from an inner layer may import from an outer layer.
+- Run `sbt "testOnly com.tark.architecture.HexagonalBoundarySpec"` to verify layer integrity.
 
-Tests now mirror the package boundaries more closely: domain suites cover domain
-values, application suites cover use-case orchestration, port suites cover port
-laws and pure shared helpers, adapter suites cover concrete technologies, and
-shared test fakes live under `@src/test/scala/com/tark/support`.
+### 2. Pure Functional Programming Principles
+- All state changes, transitions, and user inputs must be modeled as pure values.
+- Immutability is the default. Do not use mutable variables (`var`), mutable collections, or side-effecting state outside local, isolated performance hotspots.
+- Side effects must be explicitly captured and managed using the Cats Effect type system (`IO` or `F`).
+
+### 3. Non-Blocking I/O (Thread Safety)
+- Cats Effect manages a cooperatively scheduled, non-blocking work-stealing thread pool. Any blocking synchronous operations will starve this pool.
+- **Never** execute blocking, synchronous I/O, filesystem operations, process spawns, or socket reads/writes inside standard `IO { ... }` or `F.delay { ... }` blocks.
+- **Always** wrap synchronous or blocking work in `IO.blocking { ... }` or `Sync[F].blocking { ... }` to safely dispatch them to a dedicated blocking execution context.
+- System resources (such as file handles, terminal states, process handles, and docker containers) must be safely managed using the `Resource` or `Resource.make` lifecycle patterns to prevent leaks on failure or termination.
+
+### 4. Direct Composition and Fakes over Mocking
+- Avoid mock frameworks (like Mockito or ScalaMock) which weaken typing and produce fragile tests.
+- For outbound ports in tests, write explicit, simple, and strongly typed fake implementations under `src/test/scala/com/tark/support/Fakes.scala`. Fakes should record calls and provide programmable static responses.
+
+### 5. Deterministic Law Testing
+- Typeclass algebras (like `Serializable`, `Sink`, `Formattable`, `ConfigOps`) must be validated against algebraic laws (e.g., identity, determinism, last-write-wins).
+- Include law-assertion tests in your test suites using shared test behaviors or traits (such as `PortLawChecks`).
