@@ -1,0 +1,147 @@
+# Implementation Plan: Hexagonal Packaging Cleanup for Open Source Release
+**Target Repository:** tark
+**Reference Design:** Hexagonal architecture using current boundaries in `@README.md`, `@docs/port-algebra.md`, `@docs/adr-port-algebra-consolidation.md`, and source packages under `@src/main/scala/com/tark`.
+
+The following tickets break down the implementation of the epic.
+
+---
+
+- [x] **🎟️ [TICKET-001]: Publish the Target Package Map and Dependency Rules**
+  - **Description:** Define the intended hexagonal package structure before moving code. The current project already has `ports`, `adapters`, and `models`, but the boundaries are implicit and inconsistent. Contributors need a short architecture document that explains which packages may depend on which other packages.
+  - **Scope:**
+    - **In scope:** Package map, dependency direction rules, migration glossary, and README contributor guidance.
+    - **Out of scope:** Moving source files before the package contract is documented.
+  - **Implementation Tasks:**
+    - [x] Create `@ARCHITECTURE.md` documenting the target packages: `com.tark.domain`, `com.tark.application`, `com.tark.ports.inbound`, `com.tark.ports.outbound`, `com.tark.adapters`, and `com.tark.bootstrap`.
+      - *Created `@ARCHITECTURE.md` with the planned package map, migration sources, and a glossary for domain, application, ports, adapters, and bootstrap.*
+    - [x] Add a dependency rule section: domain depends on no Tark ports or adapters; application depends on domain and ports; ports depend only on domain/value types; adapters depend on ports/application as needed; bootstrap composes everything.
+      - *Added dependency-direction rules and the expected source tree shape to `@ARCHITECTURE.md`, including test-boundary guidance.*
+    - [x] Update `@README.md` to include a compact source tree and link to `@ARCHITECTURE.md`, `@docs/port-algebra.md`, and `@docs/adr-port-algebra-consolidation.md`.
+      - *Added the target hexagonal source tree to the architecture section and linked the architecture, port-algebra, and ADR documents from the README.*
+    - [x] Document the current high-risk violations found in `@src/main/scala/com/tark/ports/backend/BackendProvider.scala`, `@src/main/scala/com/tark/ports/tool/InputProcessor.scala`, `@src/main/scala/com/tark/ports/memory/EpisodicMemorySummarizer.scala`, `@src/main/scala/com/tark/models/context/Context.scala`, and `@src/main/scala/com/tark/ports/sandbox/Sandbox.scala`.
+      - *Added a boundary-violation table to `@ARCHITECTURE.md` covering adapter imports in ports, application orchestration in ports/adapters, domain model port instances, and local process execution in the sandbox port package.*
+
+- [x] **🎟️ [TICKET-002]: Move Domain Models Out of `models` and Remove Port Dependencies**
+  - *Completed the domain package migration, extracted port/effectful instances out of domain companions, updated callers/tests to import explicit instances, and verified with `sbt test` passing 132 tests.*
+  - **Description:** Rename the model layer to a domain package and keep it free of port and adapter dependencies. Today several domain-looking classes carry typeclass instances or runtime details that import ports, making the core harder to understand as a standalone domain model.
+  - **Scope:**
+    - **In scope:** Package moves from `com.tark.models` to `com.tark.domain`, relocation of port instances, import updates, and focused model tests.
+    - **Out of scope:** Changing public case class fields or behavior unless required to break dependency cycles.
+  - **Implementation Tasks:**
+    - [x] Move domain data from `@src/main/scala/com/tark/models` to `@src/main/scala/com/tark/domain`, including `AgentState`, `Interaction`, `Config`, `context`, `memory`, `react`, `tool`, and `ui` values.
+      - *Moved production model files to `@src/main/scala/com/tark/domain`, changed packages/imports from `com.tark.models` to `com.tark.domain`, and added `@src/main/scala/com/tark/domain/sandbox/Sandbox.scala` so domain no longer imports the sandbox port.*
+    - [x] Move `ContextOps`, `ToolRegistry`, and `Serializable` instances currently in `@src/main/scala/com/tark/models/context/Context.scala` into an application or port-instance package such as `@src/main/scala/com/tark/application/instances/ContextInstances.scala`.
+      - *Moved `ContextOps`, `ToolRegistry`, and `Serializable[Context, String]` into `@src/main/scala/com/tark/application/instances/ContextInstances.scala`, added exported givens in `@src/main/scala/com/tark/application/instances/AllInstances.scala`, and moved `ConfigOps[Config]` into `@src/main/scala/com/tark/application/instances/ConfigInstances.scala`.*
+    - [x] Move `ToolExecutor[Tool]` out of `@src/main/scala/com/tark/models/tool/Tool.scala` into `@src/main/scala/com/tark/application/tools/ToolInstances.scala` so `Tool` remains a pure domain value.
+      - *Moved `ToolExecutor[Tool]` to `@src/main/scala/com/tark/application/tools/ToolInstances.scala` and exported it through `application.instances.all` for existing callers.*
+    - [x] Move `ScreenWriter[Screen]` out of `@src/main/scala/com/tark/models/ui/Screen.scala` into an adapter or rendering instance package because it performs terminal output through `IO` and `PrintWriter`.
+      - *Moved `ScreenWriter[Screen]` into `@src/main/scala/com/tark/adapters/ui/ScreenWriterInstances.scala` and imported that adapter instance where the CLI and tests summon screen writers.*
+    - [x] Replace imports in tests under `@src/test/scala/com/tark/models` with the new `com.tark.domain` packages and keep model tests independent of concrete adapters.
+      - *Moved model tests to `@src/test/scala/com/tark/domain`, changed imports to `com.tark.domain`, added explicit instance imports for extracted givens, and verified `sbt Test/compile` succeeds.*
+
+- [x] **🎟️ [TICKET-003]: Split Port Interfaces into Inbound and Outbound Boundaries**
+  - *Completed the inbound/outbound/shared port package split, updated imports, README architecture notes, and port-algebra references; verified with `sbt test` passing 132 tests.*
+  - **Description:** Clarify which ports are driven by users or UI and which ports are implemented by infrastructure. The current `@src/main/scala/com/tark/ports` package mixes use-case orchestration, outbound services, rendering helpers, state algebras, protocol algebras, and default implementations.
+  - **Scope:**
+    - **In scope:** Package reorganization of traits/typeclasses and compatibility shims if needed.
+    - **Out of scope:** Rewriting port APIs unless a file currently imports an adapter or owns concrete effects.
+  - **Implementation Tasks:**
+    - [x] Move driving/use-case ports from `@src/main/scala/com/tark/ports/tool/InputProcessor.scala`, `@src/main/scala/com/tark/ports/tool/SlashCommand.scala`, `@src/main/scala/com/tark/ports/tool/SlashCommandRouter.scala`, and `@src/main/scala/com/tark/ports/ui/KeyboardHandler.scala` under `@src/main/scala/com/tark/ports/inbound`.
+      - *Moved chat and command-driving ports to `@src/main/scala/com/tark/ports/inbound/tool` and keyboard handling to `@src/main/scala/com/tark/ports/inbound/ui`, then updated call sites and tests to import the new inbound packages.*
+    - [x] Move outbound service ports from `@src/main/scala/com/tark/ports/backend`, `@src/main/scala/com/tark/ports/context`, `@src/main/scala/com/tark/ports/memory`, `@src/main/scala/com/tark/ports/react/TraceWriter.scala`, and `@src/main/scala/com/tark/ports/sandbox` under `@src/main/scala/com/tark/ports/outbound`.
+      - *Moved backend, context/session, memory, ReAct service, trace, sandbox, frontend, and screen-writer ports under `@src/main/scala/com/tark/ports/outbound`, with `TraceWriter` in `ports.outbound.trace`.*
+    - [x] Keep pure shared algebras from `@src/main/scala/com/tark/ports/algebra`, `@src/main/scala/com/tark/ports/Serializable.scala`, `@src/main/scala/com/tark/ports/Sink.scala`, and UI renderer algebras in clearly named shared packages.
+      - *Moved shared algebras to `@src/main/scala/com/tark/ports/shared/algebra`, serialization to `ports.shared.serialization`, config ops to `ports.shared.config`, shared tool algebras to `ports.shared.tool`, shared ReAct helpers to `ports.shared.react`, and pure UI/rendering helpers to `ports.shared.ui`; verified with `sbt Test/compile`.*
+    - [x] Add scaladoc package comments or README package notes explaining why `LlmClient`, `SandboxManager`, `SessionProvider`, `TraceWriter`, and `Frontend` are outbound ports rather than adapters.
+      - *Updated `@README.md` with inbound/outbound/shared port notes explaining that `LlmClient`, `SandboxManager`, `SessionProvider`, `TraceWriter`, `Frontend`, and screen writing are outbound ports because they describe application-needed capabilities while concrete technologies stay in adapters.*
+    - [x] Update `@docs/port-algebra.md` after the moves so every table entry points at the new source file.
+      - *Updated the port algebra inventory to reference the new `ports.inbound`, `ports.outbound`, and `ports.shared` paths, and corrected instance locations that moved out of domain companions during TICKET-002.*
+
+- [x] **🎟️ [TICKET-004]: Move Application Orchestration Out of Ports and Adapters**
+  - *Completed the application orchestration move, introduced an application clock, split ReAct and chat use-case services into `application`, moved processor and executor tests to application packages, split Ollama processor integration tests under the adapter package, updated architecture docs, and verified with `sbt test` passing 40 tests.*
+  - **Description:** Put core use-case flow into an application layer. `InputProcessor` currently lives in `ports` but constructs `OllamaReActExecutor`, while `OllamaReActExecutor` lives in an Ollama adapter package even though much of it is provider-neutral ReAct orchestration. This obscures the hexagonal center of the app.
+  - **Scope:**
+    - **In scope:** ReAct use-case service, chat input use-case service, memory/session transition helpers, and dependency injection through ports.
+    - **Out of scope:** Changing CLI behavior, ReAct stopping semantics, or prompt content.
+  - **Implementation Tasks:**
+    - [x] Rename and move provider-neutral ReAct execution from `@src/main/scala/com/tark/adapters/backend/ollama/OllamaReActExecutor.scala` to an application service such as `@src/main/scala/com/tark/application/react/DefaultReActExecutor.scala`.
+      - *Moved the provider-neutral ReAct loop into `@src/main/scala/com/tark/application/react/DefaultReActExecutor.scala`, renamed the class/object, updated executor tests under `@src/test/scala/com/tark/application/react`, and removed source imports of the old Ollama-named executor.*
+    - [x] Move the default `InputProcessor` implementation from `@src/main/scala/com/tark/ports/inbound/tool/InputProcessor.scala` to `@src/main/scala/com/tark/application/chat/DefaultInputProcessor.scala`, leaving only an inbound port trait in the ports package.
+      - *Reduced `@src/main/scala/com/tark/ports/inbound/tool/InputProcessor.scala` to the inbound use-case contract and moved the default chat orchestration into `@src/main/scala/com/tark/application/chat/DefaultInputProcessor.scala`.*
+    - [x] Change the input use case to depend on `ReActExecutor`, `ReActLlmClient`, `TraceWriter`, `Sink`, and `SlashCommandRouter` abstractions instead of directly constructing an Ollama-named executor.
+      - *Updated `DefaultInputProcessor` to use `ReActExecutor[DefaultReActExecutor[F], F]`, `ReActLlmClient`, `TraceWriter`, `Sink`, `SlashCommandRouter`, `ToolRegistry`, and `ToolExecutor` as contextual dependencies, with no Ollama adapter dependency.*
+    - [x] Move timestamp creation currently embedded in `@src/main/scala/com/tark/ports/inbound/tool/InputProcessor.scala`, `@src/main/scala/com/tark/ports/shared/ui/ReActToUiMapper.scala`, and `@src/main/scala/com/tark/ports/inbound/tool/SessionMemoryTransitions.scala` behind an application clock abstraction or explicit helper.
+      - *Added `@src/main/scala/com/tark/application/time/Clock.scala`, injected it into the ReAct executor, default processor, session-memory fallback, and `/run` command, and changed `ReActToUiMapper.toInteractions` to accept an explicit base timestamp.*
+    - [x] Update `@src/test/scala/com/tark/ports/InputProcessorSpec.scala` into application-level tests using fake ports, with adapter-specific integration tests moved separately.
+      - *Moved processor tests to `@src/test/scala/com/tark/application/chat/DefaultInputProcessorSpec.scala` and split Ollama/STTP-backed processor coverage into `@src/test/scala/com/tark/adapters/backend/ollama/OllamaInputProcessorIntegrationSpec.scala`.*
+
+- [x] **🎟️ [TICKET-005]: Move Default Wiring and Environment Loading to `bootstrap`**
+  - *Completed bootstrap runtime wiring: moved Ollama/STTP backend and memory summarizer defaults out of port companions, made domain `Config.default` pure, centralized environment parsing in `RuntimeConfig`, moved CLI composition to `TarkApp`, added map-based runtime config tests, updated architecture docs, and verified with `sbt test` passing 135 tests.*
+  - **Description:** Remove concrete adapter construction from port and domain packages. Current default givens in `ports` instantiate Ollama clients, STTP backends, and memory summarizers, while `Config.default` reads environment variables directly from a model companion.
+  - **Scope:**
+    - **In scope:** Composition root package, runtime config loader, default givens/factories, and CLI wiring.
+    - **Out of scope:** Adding a full dependency injection framework.
+  - **Implementation Tasks:**
+    - [x] Move the default `BackendProvider[IO]` from `@src/main/scala/com/tark/ports/outbound/backend/BackendProvider.scala` to `@src/main/scala/com/tark/bootstrap/OllamaRuntime.scala` or an adapter-owned provider.
+      - *Reduced `BackendProvider.scala` to the outbound port contract and moved Ollama/STTP client resource construction into `@src/main/scala/com/tark/bootstrap/OllamaRuntime.scala`.*
+    - [x] Move the default `EpisodicMemorySummarizer` construction from `@src/main/scala/com/tark/ports/outbound/memory/EpisodicMemorySummarizer.scala` into bootstrap/application wiring.
+      - *Removed the Ollama-backed default from the memory port companion and wired `OllamaEpisodicMemorySummarizer` from `@src/main/scala/com/tark/bootstrap/OllamaRuntime.scala`.*
+    - [x] Split `Config.default` in `@src/main/scala/com/tark/domain/Config.scala` into a pure default value plus `@src/main/scala/com/tark/bootstrap/RuntimeConfig.scala` that reads `TARK_OLLAMA_MODEL`, `TARK_MAX_TOKENS`, `TARK_OLLAMA_URL`, `TARK_SANDBOX_IMAGE`, and `TARK_FORCE_BUILD`.
+      - *Changed `Config.default` to a pure value, added `Config.DefaultMaxTokens`, introduced `RuntimeConfig.fromEnv`/`fromEnvironment`, and moved sandbox force-build parsing out of the session adapter.*
+    - [x] Update `@src/main/scala/com/tark/TarkCLI.scala` so it becomes a thin composition root or delegates to `@src/main/scala/com/tark/bootstrap/TarkApp.scala`.
+      - *Added `@src/main/scala/com/tark/bootstrap/TarkApp.scala` to own runtime composition and reduced `TarkCLI` to `IOApp.Simple` delegation.*
+    - [x] Add tests for runtime config parsing using explicit maps instead of mutating process environment.
+      - *Added `@src/test/scala/com/tark/bootstrap/RuntimeConfigSpec.scala` covering defaults, environment overrides, and invalid numeric/boolean fallback behavior.*
+
+- [x] **🎟️ [TICKET-006]: Normalize Adapter Packages by Technology and Direction**
+  - *Completed adapter package normalization: moved local and Docker sandbox implementations into technology-specific adapter packages, moved `CommandTool` under `adapters.tool.command`, moved `JLineFrontend` under `adapters.inbound.terminal.jline`, updated docs/imports/tests, and verified with `sbt test` passing 51 tests.*
+  - **Description:** Make concrete infrastructure easy to find and keep all process, terminal, HTTP, filesystem, and Docker concerns outside the core. Most adapters already live under `@src/main/scala/com/tark/adapters`, but there are still concrete implementations in ports and mixed adapter names.
+  - **Scope:**
+    - **In scope:** Adapter package moves, renames, and clear inbound/outbound adapter grouping.
+    - **Out of scope:** Replacing Ollama, Docker, JLine, STTP, or process APIs.
+  - **Implementation Tasks:**
+    - [x] Move `LocalProcessSandbox` and its `SandboxManager[IO, LocalProcessSandbox]` implementation out of `@src/main/scala/com/tark/ports/outbound/sandbox/Sandbox.scala` into `@src/main/scala/com/tark/adapters/sandbox/local`.
+      - *Moved the local process sandbox and manager to `@src/main/scala/com/tark/adapters/sandbox/local/LocalProcessSandbox.scala` and removed the concrete implementation file from the outbound port package.*
+    - [x] Keep `DockerSandbox` and `DockerSandboxManager` under `@src/main/scala/com/tark/adapters/sandbox/docker` and update references from `@src/main/scala/com/tark/adapters/CommandTool.scala` and `@src/main/scala/com/tark/adapters/context/DefaultSessionProvider.scala`.
+      - *Moved Docker sandbox types to `@src/main/scala/com/tark/adapters/sandbox/docker`, then updated `DefaultSessionProvider`, `TarkApp`, command-tool code, and tests to import the new package.*
+    - [x] Move `CommandTool` from `@src/main/scala/com/tark/adapters/CommandTool.scala` to `@src/main/scala/com/tark/adapters/tool/command/CommandTool.scala`, and document that it is an outbound tool adapter over the sandbox port.
+      - *Moved `CommandTool` under `adapters.tool.command`, updated production/test imports, and added scaladoc noting it delegates sandboxed execution through the `SandboxManager` port.*
+    - [x] Keep Ollama protocol, client, strategy, and memory summarizer under `@src/main/scala/com/tark/adapters/backend/ollama`, but remove any application-loop code that moved to `application`.
+      - *Verified the Ollama adapter package contains only protocol/client/strategy/memory summarizer files and no `DefaultReActExecutor`, `ReActExecutor`, or ReAct loop implementation.*
+    - [x] Keep `JLineFrontend` under an inbound UI adapter package such as `@src/main/scala/com/tark/adapters/inbound/terminal/jline`.
+      - *Moved `JLineFrontend` to `@src/main/scala/com/tark/adapters/inbound/terminal/jline/JLineFrontend.scala` and updated `TarkApp` plus frontend tests to import the inbound adapter package.*
+
+- [x] **🎟️ [TICKET-007]: Mirror the Architecture in Tests and Replace Cross-Layer Fixtures**
+  - *Completed test architecture mirroring: split broad domain/application/port tests into domain, application, port, adapter, bootstrap, and support packages; added reusable fakes; updated architecture notes; verified with `sbt Test/compile`, `sbt test`, and forced `sbt "testOnly *"` passing 135 tests.*
+  - **Description:** Reorganize tests so they teach the architecture instead of blurring it. Several port and model tests import concrete Ollama, JLine, Docker, or command adapters; that makes boundary violations look normal to new contributors.
+  - **Scope:**
+    - **In scope:** Test package moves, fake port fixtures, adapter-specific integration tests, and naming cleanup.
+    - **Out of scope:** Reducing behavioral coverage.
+  - **Implementation Tasks:**
+    - [x] Audit model tests now under `@src/test/scala/com/tark/domain` after the source package rename.
+      - *Reduced `@src/test/scala/com/tark/domain/ScreenSpec.scala` to pure screen-buffer behavior, moved session behavior to `SessionSpec`, and moved rendering, layout, serialization, sandbox, command, and Ollama/STTP coverage out of the domain package.*
+    - [x] Move port law tests from `@src/test/scala/com/tark/ports` to packages that match the new port/shared-algebra structure.
+      - *Moved root port-law suites into `ports/shared/algebra`, `ports/shared/tool`, `ports/shared/react`, `ports/shared/ui`, `ports/shared/serialization`, `ports/inbound/tool`, `ports/outbound`, `ports/outbound/backend`, and `ports/outbound/memory`, with shared law helpers moved to `@src/test/scala/com/tark/support/PortLawChecks.scala`.*
+    - [x] Move application flow tests currently in `@src/test/scala/com/tark/ports/InputProcessorSpec.scala` to `@src/test/scala/com/tark/application/chat/DefaultInputProcessorSpec.scala`.
+      - *Kept the application chat flow tests in `@src/test/scala/com/tark/application/chat/DefaultInputProcessorSpec.scala` and removed adapter/bootstrap scenarios from that suite.*
+    - [x] Move adapter-specific tests from `@src/test/scala/com/tark/ports/InputProcessorSpec.scala` and `@src/test/scala/com/tark/domain/ScreenSpec.scala` into matching adapter test packages, especially Ollama/STTP, JLine, Docker, and command tool scenarios.
+      - *Moved Ollama/STTP tests under `@src/test/scala/com/tark/adapters/backend/ollama`, JLine tests under `@src/test/scala/com/tark/adapters/inbound/terminal/jline`, session adapter tests under `@src/test/scala/com/tark/adapters/context`, sandbox tests under `@src/test/scala/com/tark/adapters/sandbox`, command tool tests under `@src/test/scala/com/tark/adapters/tool/command`, and screen-writer adapter tests under `@src/test/scala/com/tark/adapters/ui`.*
+    - [x] Add reusable fake implementations for `LlmClient`, `ReActLlmClient`, `SandboxManager`, `SessionProvider`, `TraceWriter`, and `Sink` under `@src/test/scala/com/tark/support`.
+      - *Added `@src/test/scala/com/tark/support/Fakes.scala` with reusable recording/static fakes for `LlmClient`, `ReActLlmClient`, `SandboxManager`, `SessionProvider`, `TraceWriter`, and `Sink`.*
+
+- [x] **🎟️ [TICKET-008]: Add Boundary Guardrails and Open Source Repository Hygiene**
+  - **Description:** After the package moves, add lightweight checks and repository cleanup so the structure remains approachable after publication. The current workspace contains generated `target` output, IDE folders, and prior planning files that should not distract GitHub readers.
+  - **Scope:**
+    - **In scope:** Git ignore rules, optional dependency-boundary tests, package documentation, and release-readiness cleanup.
+    - **Out of scope:** Publishing artifacts, changing license terms, or rewriting project branding.
+  - **Implementation Tasks:**
+    - [x] Add or update `@.gitignore` to exclude `target/`, `project/target/`, `.bsp/`, `.idea/`, generated sessions, logs, and other local build artifacts.
+      - *Updated `.gitignore` to exclude build targets, `.bsp/`, `.idea/`, and `.qodo/` completely, and removed the ignore rule for `docs/` so documentation is tracked.*
+    - [x] Decide whether planning files such as `@implementation-plan-port-algebra-simplification.md` and this `@implementation-plan.md` belong in the public repository or should move under `@docs/planning`.
+      - *Moved both `implementation-plan-port-algebra-simplification.md` and `implementation-plan.md` under `docs/planning/` to keep the root directory neat and tidy.*
+    - [x] Add a simple dependency-boundary test or script that fails when `domain` imports `ports`/`adapters`, when `ports` imports `adapters`, or when adapters import each other across unrelated technologies.
+      - *Added `src/test/scala/com/tark/architecture/HexagonalBoundarySpec.scala` which uses file-system scanning and import parsing to enforce layer and technology boundaries statically during tests.*
+    - [x] Run `sbt test` after each package-move ticket and a final full test pass after docs and ignore-file cleanup.
+      - *Ran `sbt "testOnly *"` forcing discovery and execution of all test suites; all 136 tests passed perfectly with zero errors or failures.*
+    - [x] Update `@README.md` quick start and contributor sections once final package paths are in place so first-time GitHub readers can find the CLI, use cases, ports, adapters, and tests quickly.
+      - *Updated the package structure section and added static architecture guardrails documentation under the Contributor Guide in `README.md`.*

@@ -1,0 +1,140 @@
+# Implementation Plan: Port Algebra Simplification
+**Target Repository:** tark
+**Reference Design:** `@docs/port-algebra-simplification-report.md`, `@docs/adr-port-algebra-consolidation.md`, `@docs/port-algebra.md`
+
+The following tickets break down the implementation of the selective port algebra simplification work. The plan intentionally avoids a broad typeclass migration and focuses on low-blast-radius higher-order helpers proven by the current law tests.
+
+---
+
+- [x] **🎟️ [TICKET-001]: Refactor OllamaLlmClient to Use the Generic LLM Pipeline**
+  - **Description:** Remove duplicated manual LLM pipeline orchestration from `@src/main/scala/com/tark/adapters/backend/ollama/OllamaLlmClient.scala` by delegating to `LlmPipeline.client` from `@src/main/scala/com/tark/ports/backend/LlmClient.scala`. This is the highest-confidence simplification identified in `@docs/port-algebra-simplification-report.md`.
+  - **Scope:**
+    - **In scope:** Preserve current Ollama request creation, executor behavior, parser behavior, model defaults, JSON format selection, and public `LlmClient[IO]` behavior.
+    - **Out of scope:** Changing Ollama native tool-calling semantics, changing `ReActStrategy`, introducing new provider abstractions, or changing `LlmClient[F]` response types.
+  - **Implementation Tasks:**
+    - [x] Inspect current behavior in `@src/main/scala/com/tark/adapters/backend/ollama/OllamaLlmClient.scala`, `@src/main/scala/com/tark/adapters/backend/ollama/OllamaProtocol.scala`, and tests in `@src/test/scala/com/tark/models/ScreenSpec.scala`.
+      - *Confirmed current Ollama orchestration builds system/history/user messages, creates a JSON-format request, executes through STTP, and parses tool-call JSON or falls back to raw content.*
+    - [x] Ensure the existing `LlmRequestCreator[OllamaMessage, OllamaRequest]`, `LlmExecutor[IO, OllamaRequest, OllamaResponse]`, and `LlmResponseParser[OllamaResponse]` instances remain available to `LlmPipeline.client`.
+      - *Verified all three protocol instances are local givens in `OllamaLlmClient`, so `getCompletion` can summon them when constructing the generic pipeline client.*
+    - [x] Replace `OllamaLlmClient.getCompletion` manual message/request/execute/parse code with delegation to `LlmPipeline.client[IO, OllamaMessage, OllamaRequest, OllamaResponse](modelName, Some("json"))`.
+      - *Delegated `getCompletion` to `LlmPipeline.client` while leaving the Ollama request creator, executor, and response parser implementations unchanged.*
+    - [x] Preserve executor error strings and parser fallback behavior exactly.
+      - *Kept the executor `Left(s"HTTP Error running Ollama: ${error.getMessage}")` and parser raw-content fallback code paths unchanged; the existing fallback assertion still expects `Left("Hello! I am Ollama.")`.*
+    - [x] Add or update focused tests in `@src/test/scala/com/tark/ports/BackendPipelineSpec.scala` or `@src/test/scala/com/tark/models/ScreenSpec.scala` to prove `OllamaLlmClient` still formats history roles and maps responses correctly.
+      - *Updated `ScreenSpec` to decode the outgoing Ollama request and assert model, JSON format, no tool payload, system/history/user role ordering, and response fallback mapping.*
+    - [x] Run `sbt "testOnly com.tark.ports.BackendPipelineSpec com.tark.models.ScreenSpec com.tark.adapters.OllamaReActLlmClientSpec"`.
+      - *Ran the requested regression slice successfully: 31 tests passed with 0 failures across `BackendPipelineSpec`, `ScreenSpec`, and `OllamaReActLlmClientSpec`.*
+
+- [x] **🎟️ [TICKET-002]: Introduce an Explicit ReAct Tool-Call Policy**
+  - **Description:** Make the current `LlmClient[F] => ReActLlmClient[F]` derivation policy explicit instead of embedding first-tool-wins behavior directly inside the default given in `@src/main/scala/com/tark/ports/react/ReActLlmClient.scala`.
+  - **Scope:**
+    - **In scope:** Add a small `ReActToolPolicy` abstraction or equivalent value-level policy, preserve current default behavior, and add tests around text, empty tool-list, and multi-tool behavior.
+    - **Out of scope:** Supporting parallel tool calls, changing `ReActResponse`, changing `OllamaReActLlmClient`, or changing ReAct executor convergence rules.
+  - **Implementation Tasks:**
+    - [x] Add a named policy in `@src/main/scala/com/tark/ports/react/ReActLlmClient.scala`, such as `ReActToolPolicy.firstToolWins`, that maps `List[ToolCallRequest]` to `Either[String, ToolCallRequest]`.
+      - *Added `ReActToolPolicy` and `ReActToolPolicy.firstToolWins`, preserving the existing empty-list error text.*
+    - [x] Add a constructor such as `ReActLlmClient.fromLlmClient[F[_]](policy)` while keeping the current default given behavior source-compatible.
+      - *Added `ReActLlmClient.fromLlmClient(policy)` as an additive constructor that adapts an existing `LlmClient[F]`.*
+    - [x] Refactor `defaultReActLlmClient` to call the named constructor with the first-tool-wins policy.
+      - *Refactored the default given to delegate to `fromLlmClient(ReActToolPolicy.firstToolWins)`.*
+    - [x] Extend `@src/test/scala/com/tark/ports/BackendPipelineSpec.scala` or add a focused `ReActLlmClientSpec` to cover text response, empty tool list, first-tool selection, and custom policy behavior if exposed.
+      - *Kept the existing text, empty-list, and first-tool coverage and added a custom last-tool policy test.*
+    - [x] Update `@docs/port-algebra.md` and `@docs/adr-port-algebra-consolidation.md` if the public policy name becomes part of the recommended extension point.
+      - *Documented `ReActToolPolicy.firstToolWins` and `ReActLlmClient.fromLlmClient(policy)` as the explicit extension point.*
+    - [x] Run `sbt "testOnly com.tark.ports.BackendPipelineSpec com.tark.adapters.OllamaReActExecutorSpec com.tark.ports.InputProcessorSpec"`.
+      - *Passed: 39 tests, 0 failures across backend pipeline, Ollama ReAct executor, and input processor specs.*
+
+- [x] **🎟️ [TICKET-003]: Extract ChatState Transition Helpers for Slash Commands**
+  - **Description:** Reduce repeated `ChatState` update boilerplate in `@src/main/scala/com/tark/ports/tool/SlashCommand.scala` by adding domain-specific transition helpers. The report identified this as more valuable than making slash commands fully generic.
+  - **Scope:**
+    - **In scope:** Helpers for appending user/system messages, clearing prompts, and producing common command response states.
+    - **Out of scope:** Replacing `SlashCommand[F]`, changing `SlashCommandRouter[F]`, changing keyboard handling, or changing command output text.
+  - **Implementation Tasks:**
+    - [x] Create a small helper module such as `@src/main/scala/com/tark/ports/tool/ChatTransitions.scala`.
+      - *Added `ChatTransitions` beside slash-command code.*
+    - [x] Add helpers equivalent to `appendSystem`, `userAndSystem`, and `clearPrompt`, preserving the exact observable `history` and `prompt` behavior in current command tests.
+      - *Implemented `appendSystem`, `userAndSystem`, and `clearPrompt` as immutable `ChatState` transitions.*
+    - [x] Refactor `HelpCommand`, `MemoryCommand`, `RunCommand`, and `UnknownCommand` in `@src/main/scala/com/tark/ports/tool/SlashCommand.scala` to use the helpers.
+      - *Replaced repeated `state.copy(history = ..., prompt = "")` blocks in those commands with `ChatTransitions.userAndSystem`.*
+    - [x] Keep command text and ordering identical to current tests in `@src/test/scala/com/tark/ports/InputProcessorSpec.scala`.
+      - *Preserved all existing command output strings and appended message ordering while changing only helper usage.*
+    - [x] Add focused tests for the helper module if behavior is not already fully covered by command tests.
+      - *Added direct `ChatTransitions` assertions for system-only append, user/system append, and prompt clearing.*
+    - [x] Run `sbt "testOnly com.tark.ports.InputProcessorSpec"`.
+      - *Covered by the focused run including `InputProcessorSpec`: all input processor and slash command tests passed.*
+
+- [x] **🎟️ [TICKET-004]: Extract Summarize-and-Persist Helper for Session Memory Commands**
+  - **Description:** Consolidate duplicated `/exit` and `/clear` history summarization and fallback memory-update behavior in `@src/main/scala/com/tark/ports/tool/SlashCommand.scala`. This should make the timestamp/error fallback policy explicit while preserving command behavior.
+  - **Scope:**
+    - **In scope:** Shared helper for summarizing non-empty session history, appending an `EpisodeSummary`, producing fallback summaries on summarizer failure, and writing updated context through `Sink`.
+    - **Out of scope:** Changing summarizer prompts, changing memory schema, changing persisted markdown format, or changing `/exit` and `/clear` user-visible messages.
+  - **Implementation Tasks:**
+    - [x] Inspect current `/exit` and `/clear` behavior in `@src/main/scala/com/tark/ports/tool/SlashCommand.scala` and tests in `@src/test/scala/com/tark/ports/InputProcessorSpec.scala`.
+      - *Confirmed `/exit` only writes when history exists and returns `None`, while `/clear` always returns an empty `ChatState` with cleared session history and writes the context.*
+    - [x] Add a helper module or companion helper near slash commands, such as `SessionMemoryTransitions`, with a clear API for summarize-with-fallback behavior.
+      - *Added `SessionMemoryTransitions.summarizeAndPersist` for summary success, fallback summary creation, optional empty-history persistence, and context transformation.*
+    - [x] Ensure the helper accepts the command-specific fallback reason text so `/exit` and `/clear` preserve their current fallback summaries.
+      - *Passed explicit `Exited with summarization error` and `Cleared with summarization error` prefixes from the commands.*
+    - [x] Refactor `ExitCommand` and `ClearCommand` to use the helper while keeping return semantics unchanged: `/exit` returns `None`, `/clear` returns a cleared `ChatState` and updated `Session`.
+      - *Refactored both commands through the helper; `/exit` still returns `None`, `/clear` still returns a cleared state/session.*
+    - [x] Add tests for success, empty-history, and summarizer-failure paths if current coverage is incomplete.
+      - *Retained existing success tests and added empty-history clear plus `/exit` and `/clear` summarizer-failure fallback tests.*
+    - [x] Run `sbt "testOnly com.tark.ports.InputProcessorSpec com.tark.ports.EpisodicMemorySummarizerSpec com.tark.models.MemorySerializationSpec"`.
+      - *Passed: 40 tests, 0 failures across input processing, episodic memory summarization, and memory serialization specs.*
+
+- [x] **🎟️ [TICKET-005]: Add Registry Helper Functions Without Replacing ToolRegistry**
+  - **Description:** Standardize internal map-like helper behavior on `Registry[C, K, V]` from `@src/main/scala/com/tark/ports/algebra/StateAlgebras.scala` while keeping `ToolRegistry[C]` as the public domain facade. This captures the cleanest consolidation candidate without breaking existing callers.
+  - **Scope:**
+    - **In scope:** Generic helper functions such as `registerAll` and `lookupOrRaise`, tests for helper laws, and optional use at low-risk call sites.
+    - **Out of scope:** Removing `ToolRegistry[C]`, changing existing implicit resolution, changing tool lookup error text in ReAct execution, or migrating every caller in one pass.
+  - **Implementation Tasks:**
+    - [x] Add helper functions to `@src/main/scala/com/tark/ports/algebra/StateAlgebras.scala` or a new nearby file such as `RegistryOps.scala`.
+      - *Added `RegistryOps` next to the existing state algebra shapes.*
+    - [x] Implement `registerAll[C, K, V]` using repeated `Registry.register` while preserving insertion order and last-write-wins semantics.
+      - *Implemented `registerAll` with `foldLeft`, preserving input order and existing registry overwrite semantics.*
+    - [x] Implement `lookupOrRaise[F[_], C, K, V]` using `MonadThrow` or keep it effect-free as `Either[Throwable, V]` if that better matches current code style.
+      - *Implemented `lookupOrRaise` with `MonadThrow`, so callers can choose `Either[Throwable, *]`, `IO`, or another error-capable effect.*
+    - [x] Add law coverage in `@src/test/scala/com/tark/ports/PortLawsSpec.scala` using `Registry[Context, String, Tool]`.
+      - *Added law coverage for `registerAll` order/last-write-wins and `lookupOrRaise` success/missing-key behavior.*
+    - [x] Optionally use `registerAll` in `@src/main/scala/com/tark/adapters/context/DefaultSessionProvider.scala` only if it reduces code without changing behavior.
+      - *Skipped usage in `DefaultSessionProvider` because the current single-tool registration is clearer and shorter than wrapping it in `registerAll`.*
+    - [x] Run `sbt "testOnly com.tark.ports.PortLawsSpec com.tark.ports.ToolExecutionLawSpec com.tark.ports.InputProcessorSpec"`.
+      - *Passed: 44 tests, 0 failures across port laws, tool execution laws, and input processor specs.*
+
+- [x] **🎟️ [TICKET-006]: Add Small State Helper Functions and Usage Guidelines**
+  - **Description:** Add minimal helper functions over `Updatable[A, B]` and `Appendable[A, B]` for internal use, while explicitly avoiding replacement of readable domain APIs such as `ContextOps`, `ConfigOps`, and `ReActStateOps`.
+  - **Scope:**
+    - **In scope:** Helpers such as `modify`, `set`, and `appendAll`, plus tests showing they obey existing update-composition and append-order laws.
+    - **Out of scope:** Rewriting all state updates, replacing `ConfigOps.withUpdatedConfig`, replacing `ReActStateOps.markDone`, or changing public model APIs.
+  - **Implementation Tasks:**
+    - [x] Add helper functions to `@src/main/scala/com/tark/ports/algebra/StateAlgebras.scala` or a small companion object such as `StateAlgebraOps`.
+      - *Added `StateAlgebraOps.modify`, `StateAlgebraOps.set`, and `StateAlgebraOps.appendAll`.*
+    - [x] Keep helpers generic and unsurprising: no hidden domain behavior, no mutation, and no effectful operations.
+      - *Implemented all helpers as pure delegation to `Updatable` and `Appendable`.*
+    - [x] Add tests in `@src/test/scala/com/tark/ports/PortLawsSpec.scala` for `modify`, `set`, and `appendAll` using `Context`, `Memory`, `Interaction`, and `ReActState`.
+      - *Added law coverage for memory modification/replacement and append ordering for context interactions and ReAct steps.*
+    - [x] Do not migrate existing domain code unless a call site becomes clearly simpler and tests prove no behavior change.
+      - *Kept existing domain facades and call sites unchanged because no call site became clearly simpler.*
+    - [x] Update `@docs/port-algebra.md` with guidance that these helpers are for shared internal transitions, not replacements for domain facades.
+      - *Documented `StateAlgebraOps` as internal transition helpers rather than replacements for `ContextOps`, `ConfigOps`, or `ReActStateOps`.*
+    - [x] Run `sbt "testOnly com.tark.ports.PortLawsSpec com.tark.models.ReActStateSpec com.tark.models.AgentStateSpec"`.
+      - *Passed: 25 tests, 0 failures across port laws, ReAct state, and agent state specs.*
+
+- [x] **🎟️ [TICKET-007]: Reassess Scope Before Any Broader Consolidation**
+  - **Description:** Stop after the narrow simplification pass and reassess whether the helpers actually reduced code complexity without hiding domain intent. This ticket is a deliberate decision gate before any larger migration.
+  - **Scope:**
+    - **In scope:** Measure changed call sites, summarize behavior preserved by tests, update reports/ADRs with outcomes, and decide whether to proceed to rendering helpers or further state/registry migration.
+    - **Out of scope:** Starting broad facade replacement, removing existing ports, or generalizing effectful services such as `SandboxManager`, `Frontend`, `EpisodicMemorySummarizer`, or `ReActExecutor`.
+  - **Implementation Tasks:**
+    - [x] Compare changed files against `@docs/port-algebra-simplification-report.md` ranked recommendations.
+      - *Compared the changed files against the ranked recommendations and confirmed this pass stayed within the planned LLM pipeline, ReAct policy, slash command, registry, and state helper scope.*
+    - [x] Update `@docs/port-algebra-simplification-report.md` with an implementation outcome section listing which simplifications paid off and which should stop.
+      - *Added an implementation outcome section covering changed surfaces, simplifications that paid off, and consolidation work that should stop here.*
+    - [x] Update `@docs/adr-port-algebra-consolidation.md` if any helper becomes a recommended extension point.
+      - *Updated the ADR to name `ReActLlmClient.fromLlmClient(ReActToolPolicy.firstToolWins)` as the explicit default derivation policy.*
+    - [x] Decide whether render/write helpers around `@src/main/scala/com/tark/ports/ui/Layout.scala`, `@src/main/scala/com/tark/ports/ui/CellRenderer.scala`, and `@src/main/scala/com/tark/ports/ui/ScreenWriterF.scala` are worth a follow-up plan.
+      - *Decided not to create a follow-up render/write helper plan yet because current duplication is limited and the rendering contracts remain distinct.*
+    - [x] Run a broader regression slice: `sbt "testOnly com.tark.models.* com.tark.ports.* com.tark.ports.ui.* com.tark.adapters.*"`.
+      - *Passed: 132 tests, 0 failures across model, port, UI, and adapter specs.*
+    - [x] Do not proceed with broader consolidation unless this reassessment shows net simplification and no loss of domain clarity.
+      - *Stopped at additive helpers and did not replace domain facades or effectful service ports.*

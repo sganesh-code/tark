@@ -1,0 +1,45 @@
+# sbt/Scala
+target/
+project/target/
+project/project/target/
+.bsp/
+.qodo/
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# Eclipse
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+
+# VS Code
+.vscode/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Tark Traces and Logs
+react-trace-*.log
+react-trace-*.md
+*.log
+sessions/
+test-sessions/
