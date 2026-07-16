@@ -1,5 +1,7 @@
 package com.tark.domain
 
+import com.tark.domain.tool.OpenAIMessage
+
 /**
  * Represents the structured state of an LLM agent execution, as described in
  * agent_harness_research_grounding.md. This canonical state allows the harness
@@ -19,7 +21,8 @@ case class AgentState(
                      candidateAnswer: Option[String] = None,
                      confidence: Double = 0.0,
                      done: Boolean = false,
-                     reasonForStop: Option[String] = None
+                     reasonForStop: Option[String] = None,
+                     messages: List[OpenAIMessage] = List.empty
                      ) {
 
   // Copy-based helper methods for easy and chainable state updates
@@ -62,6 +65,12 @@ case class AgentState(
 
   def withDone(d: Boolean, reason: Option[String] = None): AgentState =
     copy(done = d, reasonForStop = reason)
+
+  def withMessages(nextMessages: List[OpenAIMessage]): AgentState =
+    copy(messages = nextMessages)
+
+  def addMessage(message: OpenAIMessage): AgentState =
+    copy(messages = messages :+ message)
 }
 
 object AgentState {
@@ -71,4 +80,3 @@ object AgentState {
   given Encoder[AgentState] = deriveEncoder
   given Decoder[AgentState] = deriveDecoder
 }
-

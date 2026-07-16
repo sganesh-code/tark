@@ -59,7 +59,7 @@ class MemorySpec extends FunSuite {
   }
 
   test("ContextOps: getMemory and updateMemory perform pure updates") {
-    val initialContext = Context(Map.empty, Memory(), List.empty)
+    val initialContext = Context(List.empty, Memory(), List.empty)
     val ops = summon[ContextOps[Context]]
 
     val initialMemory = ops.getMemory(initialContext)

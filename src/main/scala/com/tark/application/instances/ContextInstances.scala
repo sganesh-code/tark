@@ -3,15 +3,14 @@ package com.tark.application.instances
 import com.tark.domain.{AgentState, Interaction}
 import com.tark.domain.context.Context
 import com.tark.domain.memory.Memory
-import com.tark.domain.tool.Tool
+import com.tark.domain.tool.ToolDefinition
 import com.tark.ports.shared.serialization.Serializable
 import com.tark.ports.outbound.context.ContextOps
-import com.tark.ports.shared.tool.ToolRegistry
 
 object ContextInstances {
   given ContextOps[Context] with {
 
-    override def getContextTools(context: Context): Map[String, Tool] =
+    override def getContextTools(context: Context): List[ToolDefinition] =
       context.tools
 
     override def updateContext(context: Context, toolName: String, memoryValue: String): Context =
@@ -37,14 +36,6 @@ object ContextInstances {
       context.copy(memory = f(context.memory))
   }
 
-  given ToolRegistry[Context] with {
-    override def register(context: Context, tool: Tool): Context =
-      context.copy(tools = context.tools + (tool.name -> tool))
-
-    override def lookup(context: Context, toolName: String): Option[Tool] =
-      context.tools.get(toolName)
-  }
-
   given Serializable[Context, String] with {
     override def serialize(context: Context): String = {
       val sb = new java.lang.StringBuilder()
@@ -54,8 +45,8 @@ object ContextInstances {
       if (context.tools.isEmpty) {
         sb.append("No tools registered.\n")
       } else {
-        context.tools.foreach { case (name, tool) =>
-          sb.append(s"- **$name**: Type = ${tool.toolType}\n")
+        context.tools.foreach { tool =>
+          sb.append(s"- **${tool.function.name}**: ${tool.function.description}\n")
         }
       }
       sb.append("\n")

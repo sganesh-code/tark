@@ -5,18 +5,18 @@ import cats.effect.unsafe.implicits.global
 import com.tark.application.instances.all.given
 import com.tark.domain.Interaction
 import com.tark.domain.context.Context
-import com.tark.domain.tool.{Tool, ToolType}
+import com.tark.domain.memory.Memory
+import com.tark.adapters.tool.command.CommandTool
 import munit.FunSuite
 
 import java.nio.file.Files
 
 class SinkSpec extends FunSuite {
   test("Sink: serializes and writes Context using Serializable to markdown file and in-memory StringBuilder") {
-    val tool = Tool("command_ls", _ => "mock", ToolType.CommandTool)
     val interaction = Interaction("id1", "ls", "file1", 123456L, "command_ls")
     val context = Context(
-      tools = Map("command_ls" -> tool),
-      memory = Map("key1" -> "val1"),
+      tools = List(CommandTool.definition),
+      memory = Memory(legacy = Map("key1" -> "val1")),
       history = List(interaction)
     )
 
@@ -24,7 +24,7 @@ class SinkSpec extends FunSuite {
     val serialized = serializer.serialize(context)
 
     assert(serialized.contains("# Session Context"))
-    assert(serialized.contains("command_ls"))
+    assert(serialized.contains("command_executor"))
     assert(serialized.contains("key1"))
     assert(serialized.contains("val1"))
     assert(serialized.contains("Interaction 1"))

@@ -2,11 +2,11 @@ package com.tark.domain.context
 
 import com.tark.domain.memory.Memory
 import com.tark.domain.sandbox.Sandbox
-import com.tark.domain.tool.Tool
+import com.tark.domain.tool.ToolDefinition
 import com.tark.domain.{AgentState, Interaction}
 
 case class Context(
-                  tools: Map[String, Tool],
+                  tools: List[ToolDefinition],
                   memory: Memory = Memory(),
                   history: List[Interaction],
                   sandbox: Option[Sandbox] = None
@@ -38,13 +38,6 @@ case class Context(
 }
 
 object Context {
-  // Overloaded constructors to support legacy Map[String, String] syntax in tests and instantiation
-  def apply(tools: Map[String, Tool], memory: Map[String, String], history: List[Interaction]): Context =
-    new Context(tools, Memory(legacy = memory), history, None)
-
-  def apply(tools: Map[String, Tool], memory: Map[String, String], history: List[Interaction], sandbox: Option[Sandbox]): Context =
-    new Context(tools, Memory(legacy = memory), history, sandbox)
-
   /**
    * Deserializes the unified Memory object from a saved markdown file by extracting
    * the embedded MEMORY_JSON comment block.

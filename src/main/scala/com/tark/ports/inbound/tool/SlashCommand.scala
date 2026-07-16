@@ -3,11 +3,12 @@ package com.tark.ports.inbound.tool
 import cats.syntax.all.*
 import com.tark.application.time.Clock
 import com.tark.domain.context.{Context, Session}
-import com.tark.domain.tool.{Tool, ToolContext}
+import com.tark.domain.tool.{ToolCall, ToolCallFunction}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
+import com.tark.ports.outbound.tool.CommandExecutor
 import com.tark.ports.shared.serialization.Sink
-import com.tark.ports.shared.tool.ToolExecutor
 import com.tark.ports.shared.ui.ChatState
+import io.circe.syntax.*
 
 import java.nio.file.Path
 
@@ -98,7 +99,7 @@ object SlashCommand {
       
       sb.append(s"  * Procedural Memory: ${session.context.tools.size} tools, ${mem.procedural.skills.size} skills\n")
       if (session.context.tools.nonEmpty) {
-        sb.append(s"    - Registered Tools: ${session.context.tools.keys.mkString(", ")}\n")
+        sb.append(s"    - Registered Tools: ${session.context.tools.map(_.function.name).mkString(", ")}\n")
       }
       mem.procedural.skills.foreach { skill =>
         sb.append(s"    - Skill '${skill.name}': ${skill.description}\n")
@@ -109,7 +110,7 @@ object SlashCommand {
     }
   }
 
-  class RunCommand[F[_]: cats.effect.Sync](using toolExecutor: ToolExecutor[Tool], clock: Clock[F]) extends SlashCommand[F] {
+  class RunCommand[F[_]: cats.effect.Sync](using clock: Clock[F], commandExecutor: CommandExecutor[F]) extends SlashCommand[F] {
     override val name: String = "/run"
     override def execute(state: ChatState, session: Session): F[Option[(ChatState, Session)]] = {
       val rawCommand = state.prompt.trim.stripPrefix("/run").trim
@@ -117,28 +118,31 @@ object SlashCommand {
         val nextState = ChatTransitions.userAndSystem(state, "Error: No command provided to run. Usage: /run <command>")
         cats.Applicative[F].pure(Some((nextState, session)))
       } else {
-        val F = summon[cats.effect.Sync[F]]
-        session.context.tools.get("command_executor") match {
-          case Some(tool) =>
+        session.context.tools.find(_.function.name == "command_executor") match {
+          case Some(_) =>
             for {
               now <- clock.realTimeMillis
-              toolCtx = ToolContext(session.context, Map("command" -> rawCommand), s"exec_$now")
-              result <- F.delay(toolExecutor.execute(tool, toolCtx))
+              toolCall = ToolCall(
+                id = s"exec_$now",
+                `type` = "function",
+                function = ToolCallFunction("command_executor", Map("command" -> rawCommand).asJson.noSpaces)
+              )
+              result <- commandExecutor.execute(session.context, toolCall)
               
               interaction = com.tark.domain.Interaction(
                 id = s"interaction_$now",
                 input = s"/run $rawCommand",
-                output = result,
+                output = result.content,
                 timestamp = now,
                 toolName = "command_executor"
               )
               updatedContext = session.context.copy(history = session.context.history :+ interaction)
               
-              nextState = ChatTransitions.userAndSystem(state, s"[EXECUTING] -> $rawCommand\n$result")
+              nextState = ChatTransitions.userAndSystem(state, s"[EXECUTING] -> $rawCommand\n${result.content}")
             } yield Some((nextState, session.copy(context = updatedContext)))
             
           case None =>
-            val nextState = ChatTransitions.userAndSystem(state, "Error: command_executor tool not found in ToolRegistry.")
+            val nextState = ChatTransitions.userAndSystem(state, "Error: command_executor tool is not registered.")
             cats.Applicative[F].pure(Some((nextState, session)))
         }
       }
@@ -165,8 +169,8 @@ object SlashCommand {
   given defaultCommands[F[_]: cats.effect.Sync](using
     summarizer: EpisodicMemorySummarizer[F],
     sink: Sink[F, Context, Path],
-    toolExecutor: ToolExecutor[Tool],
-    clock: Clock[F]
+    clock: Clock[F],
+    commandExecutor: CommandExecutor[F]
   ): List[SlashCommand[F]] = List(
     new ExitCommand[F],
     new ClearCommand[F],

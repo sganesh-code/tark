@@ -1,11 +1,11 @@
 package com.tark.ports.outbound.context
 
 import com.tark.domain.memory.Memory
-import com.tark.domain.tool.Tool
+import com.tark.domain.tool.ToolDefinition
 import com.tark.domain.{AgentState, Interaction}
 
 trait ContextOps[C] {
-  def getContextTools(context: C): Map[String, Tool]
+  def getContextTools(context: C): List[ToolDefinition]
   def updateContext(context: C, toolName: String, memoryValue: String): C
   def getContextHistory(context: C): List[Interaction]
   def addInteraction(context: C, interaction: Interaction): C

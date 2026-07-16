@@ -1,90 +1,86 @@
 package com.tark.adapters.tool.command
 
-import cats.effect.IO
-import cats.effect.unsafe.implicits.global
-import com.tark.domain.tool.{Tool, ToolContext, ToolType}
-import com.tark.domain.Interaction
+import cats.effect.Sync
+import cats.syntax.all.*
 import com.tark.adapters.sandbox.docker.DockerSandbox
-import com.tark.adapters.sandbox.docker.DockerSandboxManager.given
-import com.tark.adapters.sandbox.local.{LocalProcessSandbox, LocalProcessSandboxManager}
-import com.tark.adapters.sandbox.local.LocalProcessSandboxManager.given
-import com.tark.ports.outbound.sandbox.SandboxManager
+import com.tark.adapters.sandbox.local.LocalProcessSandbox
+import com.tark.domain.context.Context
+import com.tark.domain.tool.*
+import com.tark.ports.outbound.tool.CommandExecutor
+import io.circe.parser
 
 import scala.sys.process.*
 
-/**
- * Outbound tool adapter that exposes shell command execution through the tool
- * model and delegates sandboxed execution to the SandboxManager port.
- */
 object CommandTool {
+  given commandExecutor[F[_]: Sync]: CommandExecutor[F] with {
+    override def definition: ToolDefinition = CommandTool.definition
+    override def execute(context: Context, toolCall: ToolCall): F[ToolResult] =
+      CommandTool.execute(context, toolCall)
+  }
+
+  val definition: ToolDefinition = ToolDefinition(
+    `type` = "function",
+    function = OpenAIFunction(
+      name = "command_executor",
+      description = "Execute linux shell commands inside the configured sandbox",
+      parameters = OpenAIFunctionParams.Str(
+        description = "JSON object containing a command field with the full command to execute"
+      )
+    )
+  )
+
   def stripQuotes(s: String): String = {
     val trimmed = s.trim
-    if ((trimmed.startsWith("'") && trimmed.endsWith("'")) ||
-        (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-        (trimmed.startsWith("`") && trimmed.endsWith("`"))) {
-      trimmed.drop(1).dropRight(1).trim
-    } else {
-      trimmed
-    }
+    if (
+      (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+      (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+      (trimmed.startsWith("`") && trimmed.endsWith("`"))
+    ) trimmed.drop(1).dropRight(1).trim
+    else trimmed
   }
 
-  private def runCommand(command: String, toolContext: ToolContext): String = {
-    toolContext.context.sandbox match {
-      case Some(sandbox) =>
-        sandbox match {
-          case docker: DockerSandbox =>
-            summon[SandboxManager[IO, DockerSandbox]].execute(docker, command).unsafeRunSync()
-          case local: LocalProcessSandbox =>
-            summon[SandboxManager[IO, LocalProcessSandbox]].execute(local, command).unsafeRunSync()
-        }
-      case None =>
-        Process(Seq("sh", "-c", command)).!!
+  def commandFrom(toolCall: ToolCall): Either[String, String] =
+    parser.parse(toolCall.function.arguments).leftMap(_.getMessage).flatMap { json =>
+      json.hcursor.get[Option[String]]("command").leftMap(_.getMessage).flatMap {
+        case Some(command) => Right(stripQuotes(command))
+        case None => Left("Tool argument 'command' is missing.")
+      }
+    }.flatMap {
+      case "" => Left("Tool argument 'command' is empty.")
+      case command => Right(command)
     }
-  }
 
-  val generic: Tool = {
-    val execute: ToolContext => String = { context =>
-      val rawCommand = context.args.getOrElse("command", "").trim
-      val command = stripQuotes(rawCommand)
-      if (command.isEmpty) {
-        "Error: 'command' argument is missing."
+  def execute[F[_]: Sync](context: Context, toolCall: ToolCall): F[ToolResult] =
+    commandFrom(toolCall) match {
+      case Left(error) =>
+        Sync[F].pure(ToolResult(s"Command failed: $error"))
+      case Right(command) =>
+        runCommand(context, command).map(ToolResult.apply)
+    }
+
+  private def runCommand[F[_]: Sync](context: Context, command: String): F[String] =
+    Sync[F].blocking {
+      val process = context.sandbox match {
+        case Some(sandbox: DockerSandbox) =>
+          Process(Seq("docker", "exec", sandbox.name, "sh", "-c", command))
+        case Some(sandbox: LocalProcessSandbox) =>
+          Process(Seq("sh", "-c", command), sandbox.allowedDirectory.toFile)
+        case _ =>
+          Process(Seq("sh", "-c", command))
+      }
+
+      val stdout = new java.lang.StringBuilder
+      val stderr = new java.lang.StringBuilder
+      val logger = ProcessLogger(stdout.append(_).append("\n"), stderr.append(_).append("\n"))
+      val exitCode = process.!(logger)
+
+      if (exitCode == 0) {
+        stdout.toString.trim
       } else {
-        try {
-          runCommand(command, context)
-        } catch {
-          case ex: Exception => s"Command failed: ${ex.getMessage}"
-        }
+        val err = stderr.toString.trim
+        val out = stdout.toString.trim
+        val msg = if (err.nonEmpty) err else if (out.nonEmpty) out else "Unknown error"
+        s"Command failed with exit code $exitCode: $msg"
       }
     }
-    Tool("command_executor", execute, ToolType.CommandTool)
-  }
-
-  def create(command: String): Tool = {
-    val cleanCommand = stripQuotes(command)
-    val execute: ToolContext => String = { context =>
-        try {
-          val result = runCommand(cleanCommand, context)
-          val updatedContext = context.context.copy(
-            memory = context.context.memory + (s"cmd_${context.executionId}" -> result)
-          )
-          val interaction = Interaction(
-            id = s"interaction_${System.currentTimeMillis}",
-            input = cleanCommand,
-            output = result,
-            timestamp = System.currentTimeMillis,
-            toolName = s"command_${cleanCommand.replaceAll("\\s+", "_")}"
-          )
-          val finalContext = updatedContext.copy(
-            history = updatedContext.history :+ interaction
-          )
-          val updatedToolContext = context.copy(context = finalContext)
-          s"Command executed successfully. Result stored in memory key: cmd_${context.executionId}"
-        } catch {
-          case ex: Exception =>
-            s"Command failed: ${ex.getMessage}"
-        }
-    }
-    val sanitizedName = s"command_${cleanCommand.replaceAll("\\s+", "_")}"
-    Tool(sanitizedName, execute, ToolType.CommandTool)
-  }
 }

@@ -3,9 +3,10 @@ package com.tark.adapters.inbound.terminal.jline
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.tark.domain.context.Session
+import com.tark.domain.tool.ToolCall
 import com.tark.domain.ui.Screen
 import com.tark.ports.inbound.ui.{KeyboardAction, KeyboardHandler}
-import com.tark.ports.outbound.backend.LlmClient
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, Prompt}
 import com.tark.ports.outbound.ui.ScreenWriter
 import com.tark.ports.shared.ui.{ChatState, Layout}
 import munit.FunSuite
@@ -28,7 +29,10 @@ class JLineFrontendSpec extends FunSuite {
         IO.pure(KeyboardAction.Exit)
     }
 
-    given llmClient: LlmClient[IO] = (_, _, _, _) => IO.pure(Left(""))
+    given llmClient: LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.pure(LLMResponse("", List.empty))
+    }
 
     val frontend = JLineFrontend(terminal)
     frontend.redraw(ChatState(Vector.empty, "abc")).unsafeRunSync()

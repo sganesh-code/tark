@@ -3,6 +3,7 @@ package com.tark.domain
 import com.tark.application.instances.all.given
 
 import com.tark.domain.context.Context
+import com.tark.domain.memory.Memory
 import munit.FunSuite
 import com.tark.ports.shared.serialization.Serializable
 import com.tark.ports.outbound.context.ContextOps
@@ -61,7 +62,7 @@ class AgentStateSpec extends FunSuite {
   }
 
   test("Context: direct helper methods manipulate nested AgentState cleanly") {
-    val initialContext = Context(Map.empty, Map.empty, List.empty)
+    val initialContext = Context(List.empty, Memory(), List.empty)
     assert(initialContext.agentState.isEmpty)
 
     val updated = initialContext
@@ -97,7 +98,7 @@ class AgentStateSpec extends FunSuite {
   }
 
   test("ContextOps: typeclass provides get and update capabilities on Context") {
-    val initialContext = Context(Map.empty, Map.empty, List.empty)
+    val initialContext = Context(List.empty, Memory(), List.empty)
     val ops = summon[ContextOps[Context]]
 
     assertEquals(ops.getAgentState(initialContext), None)
@@ -108,7 +109,7 @@ class AgentStateSpec extends FunSuite {
   }
 
   test("ContextOps laws: updateAgentState composes and leaves source context unchanged") {
-    val initialContext = Context(Map.empty, Map.empty, List.empty)
+    val initialContext = Context(List.empty, Memory(), List.empty)
     val ops = summon[ContextOps[Context]]
 
     val f: AgentState => AgentState = _.withGoal("Goal")
@@ -141,7 +142,7 @@ class AgentStateSpec extends FunSuite {
   }
 
   test("Serializable: outputs beautifully formatted Agent State when present") {
-    val context = Context(Map.empty, Map.empty, List.empty)
+    val context = Context(List.empty, Memory(), List.empty)
       .withGoal("Validate harness")
       .withDeliverable("Test spec")
       .addConstraint("Strict boundaries")

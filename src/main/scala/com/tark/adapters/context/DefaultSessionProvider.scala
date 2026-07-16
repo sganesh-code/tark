@@ -2,14 +2,12 @@ package com.tark.adapters.context
 
 import cats.effect.{IO, Resource}
 import cats.syntax.all.*
+import com.tark.adapters.sandbox.docker.{DockerSandbox, DockerSandboxLifecycle}
 import com.tark.adapters.tool.command.CommandTool
 import com.tark.domain.Config
 import com.tark.domain.context.{Context, Session}
 import com.tark.domain.memory
 import com.tark.domain.memory.Memory
-import com.tark.ports.outbound.sandbox.SandboxManager
-import com.tark.adapters.sandbox.docker.DockerSandbox
-import com.tark.ports.shared.tool.ToolRegistry
 import com.tark.ports.shared.serialization.Sink
 import com.tark.ports.outbound.context.SessionProvider
 
@@ -25,8 +23,6 @@ object SessionProviderSettings {
 object DefaultSessionProvider {
   given default(using
     settings: SessionProviderSettings,
-    sandboxManager: SandboxManager[IO, DockerSandbox],
-    toolRegistry: ToolRegistry[Context],
     sink: Sink[IO, Context, Path]
   ): SessionProvider[IO] with {
     override def createSession: Resource[IO, Session] = {
@@ -65,7 +61,7 @@ object DefaultSessionProvider {
         }
         
         _ <- IO(println("Starting Docker sandbox container..."))
-        _ <- sandboxManager.start(sandbox)
+        _ <- DockerSandboxLifecycle.start(sandbox)
         
         existingMemory <- IO.blocking {
           import java.nio.file.Files
@@ -98,9 +94,8 @@ object DefaultSessionProvider {
           }
         }
         
-        initialContext = Context(Map.empty, existingMemory, List.empty, Some(sandbox))
-        contextWithTools = toolRegistry.register(initialContext, CommandTool.generic)
-        session = Session(sessionId, contextWithTools, sessionPath)
+        context = Context(List(CommandTool.definition), existingMemory, List.empty, Some(sandbox))
+        session = Session(sessionId, context, sessionPath)
         
         _ <- sink.write(session.context, sessionPath)
       } yield session
@@ -110,7 +105,7 @@ object DefaultSessionProvider {
           case Some(sandbox: DockerSandbox) =>
             for {
               _ <- IO(println("\nStopping and cleaning up Docker sandbox container..."))
-              _ <- sandboxManager.stop(sandbox)
+              _ <- DockerSandboxLifecycle.stop(sandbox)
             } yield ()
           case _ => IO.unit
         }

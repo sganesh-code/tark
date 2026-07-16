@@ -11,7 +11,7 @@ class OllamaRuntimeSpec extends FunSuite {
   test("BackendProvider: successfully allocates and releases client") {
     given RuntimeConfig = RuntimeConfig(Config.default, forceBuild = false)
     val provider = summon[BackendProvider[IO]]
-    val ((client, _), release) = provider.getClients.allocated.unsafeRunSync()
+    val (client, release) = provider.getClient.allocated.unsafeRunSync()
 
     try {
       assert(client != null)

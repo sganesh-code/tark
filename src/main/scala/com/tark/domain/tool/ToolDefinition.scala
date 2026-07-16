@@ -1,43 +1,150 @@
 package com.tark.domain.tool
 
-import com.tark.domain.tool.{FunctionDefinition, FunctionParameters, FunctionProperty, ToolDefinition}
+import io.circe.*
 import io.circe.generic.semiauto.*
-import io.circe.{Decoder, Encoder}
+import io.circe.syntax.*
 
-case class FunctionProperty(
-  `type`: String,
-  description: String
+case class OpenAIMessage(
+  role: String,
+  content: Option[String] = None,
+  tool_calls: Option[List[ToolCall]] = None,
+  tool_call_id: Option[String] = None
 )
-object FunctionProperty {
-  given Encoder[FunctionProperty] = deriveEncoder
-  given Decoder[FunctionProperty] = deriveDecoder
-}
 
-case class FunctionParameters(
-  `type`: String = "object",
-  properties: Map[String, FunctionProperty],
-  required: List[String]
-)
-object FunctionParameters {
-  given Encoder[FunctionParameters] = deriveEncoder
-  given Decoder[FunctionParameters] = deriveDecoder
-}
+case class OpenAPIFunctionParamsPropertiesPattern(`type`: String)
 
-case class FunctionDefinition(
+case class OpenAiFunctionParamsProperties(pattern: OpenAPIFunctionParamsPropertiesPattern)
+
+enum OpenAIFunctionParams:
+  case Str(`type`: String = "string", description: String)
+  case Object(`type`: String = "object", properties: OpenAiFunctionParamsProperties, description: String)
+
+case class OpenAIFunction(
   name: String,
   description: String,
-  parameters: FunctionParameters
+  parameters: OpenAIFunctionParams
 )
-object FunctionDefinition {
-  given Encoder[FunctionDefinition] = deriveEncoder
-  given Decoder[FunctionDefinition] = deriveDecoder
-}
 
 case class ToolDefinition(
-  `type`: String = "function",
-  function: FunctionDefinition
+  `type`: String,
+  function: OpenAIFunction
 )
+
+case class OpenAIRequest(
+  model: String,
+  messages: List[OpenAIMessage],
+  tools: List[ToolDefinition]
+)
+
+case class OpenAIUsage(
+  prompt_tokens: Int,
+  completion_tokens: Int,
+  total_tokens: Int
+)
+
+case class ToolCallFunction(
+  name: String,
+  arguments: String
+)
+
+case class ToolCall(id: String, `type`: String, function: ToolCallFunction)
+
+case class ToolResult(content: String)
+
+case class OpenAIResponseMessage(
+  role: String,
+  content: Option[String] = None,
+  tool_calls: Option[List[ToolCall]] = None
+)
+
+case class OpenAIResponseChoice(
+  index: Int,
+  message: OpenAIResponseMessage,
+  finish_reason: String
+)
+
+case class OpenAIResponse(
+  id: String,
+  `object`: String,
+  created: Long,
+  model: String,
+  choices: List[OpenAIResponseChoice],
+  usage: OpenAIUsage
+)
+
+object OpenAPIFunctionParamsPropertiesPattern {
+  given Encoder[OpenAPIFunctionParamsPropertiesPattern] = deriveEncoder
+  given Decoder[OpenAPIFunctionParamsPropertiesPattern] = deriveDecoder
+}
+
+object OpenAiFunctionParamsProperties {
+  given Encoder[OpenAiFunctionParamsProperties] = deriveEncoder
+  given Decoder[OpenAiFunctionParamsProperties] = deriveDecoder
+}
+
+object OpenAIFunctionParams {
+  given Encoder[OpenAIFunctionParams] = deriveEncoder
+  given Decoder[OpenAIFunctionParams] = deriveDecoder
+}
+
+object OpenAIFunction {
+  given Encoder[OpenAIFunction] = deriveEncoder
+  given Decoder[OpenAIFunction] = deriveDecoder
+}
+
 object ToolDefinition {
   given Encoder[ToolDefinition] = deriveEncoder
   given Decoder[ToolDefinition] = deriveDecoder
+}
+
+object OpenAIRequest {
+  given Encoder[OpenAIRequest] = deriveEncoder
+  given Decoder[OpenAIRequest] = deriveDecoder
+}
+
+object OpenAIUsage {
+  given Encoder[OpenAIUsage] = deriveEncoder
+  given Decoder[OpenAIUsage] = deriveDecoder
+}
+
+object ToolCallFunction {
+  given Encoder[ToolCallFunction] = deriveEncoder
+  given Decoder[ToolCallFunction] = deriveDecoder
+}
+
+object ToolCall {
+  given Encoder[ToolCall] = deriveEncoder
+  given Decoder[ToolCall] = deriveDecoder
+}
+
+object ToolResult {
+  given Encoder[ToolResult] = deriveEncoder
+  given Decoder[ToolResult] = deriveDecoder
+}
+
+object OpenAIResponseMessage {
+  given Encoder[OpenAIResponseMessage] = deriveEncoder
+  given Decoder[OpenAIResponseMessage] = deriveDecoder
+}
+
+object OpenAIResponseChoice {
+  given Encoder[OpenAIResponseChoice] = deriveEncoder
+  given Decoder[OpenAIResponseChoice] = deriveDecoder
+}
+
+object OpenAIMessage {
+  given Encoder[OpenAIMessage] = Encoder.instance { msg =>
+    val base = JsonObject("role" -> msg.role.asJson)
+    val withContent = msg.content.fold(base)(content => base.add("content", content.asJson))
+    val withToolCalls = msg.tool_calls.fold(withContent)(calls => withContent.add("tool_calls", calls.asJson))
+    val withToolCallId = msg.tool_call_id.fold(withToolCalls)(id => withToolCalls.add("tool_call_id", id.asJson))
+    Json.fromJsonObject(withToolCallId)
+  }
+
+  given Decoder[OpenAIMessage] = deriveDecoder
+}
+
+object OpenAIResponse {
+  given Encoder[OpenAIResponse] = deriveEncoder
+  given Decoder[OpenAIResponse] = deriveDecoder
 }

@@ -6,17 +6,17 @@ Tark is organized around a strict Hexagonal Architecture: domain values and appl
 
 | Package | Role |
 | --- | --- |
-| `com.tark.domain` | Core domain values, state, tool descriptions, memory values, UI value objects, and ReAct state values. |
-| `com.tark.application` | Provider-neutral use cases, orchestration services, transition helpers, and default domain typeclass instances. |
+| `com.tark.domain` | Core domain values, OpenAI-compatible tool protocol values, memory values, and UI value objects. |
+| `com.tark.application` | Provider-neutral use cases, chat orchestration, transition helpers, and serialization/context instances. |
 | `com.tark.ports.inbound` | Driving ports invoked by the CLI or other entrypoints, such as chat input, slash command dispatch, and keyboard handling. |
-| `com.tark.ports.outbound` | Driven ports implemented by infrastructure, such as LLM clients, sandbox execution, session persistence, trace writing, and memory summarization. |
+| `com.tark.ports.outbound` | Driven ports implemented by infrastructure, such as LLM clients, command execution, session persistence, and memory summarization. |
 | `com.tark.adapters` | Concrete technology implementations for Ollama/STTP, Docker/local process execution, JLine terminal UI, command tools, and filesystem/session persistence. |
 | `com.tark.bootstrap` | Runtime configuration loading and composition root wiring for the CLI application. |
 
 ## Architecture Glossary
 
 - **Domain:** Pure project language and state. It must be readable without understanding Cats Effect, STTP, Docker, JLine, or Ollama.
-- **Application:** The provider-neutral behavior that makes Tark a controlled agent harness: command routing, ReAct execution, state transitions, tracing decisions, and persistence decisions.
+- **Application:** The provider-neutral behavior that makes Tark a controlled agent harness: command routing, prompt/tool execution, state transitions, and persistence decisions.
 - **Inbound port:** An API the outside world calls to drive Tark.
 - **Outbound port:** An API Tark calls to reach an external capability.
 - **Adapter:** A concrete implementation of a port using a specific library, process, protocol, filesystem, terminal, or external service.
@@ -52,8 +52,6 @@ src/main/scala/com/tark/
     chat/
     instances/
     memory/
-    react/
-    tool/
   ports/
     inbound/
       chat/
@@ -63,12 +61,12 @@ src/main/scala/com/tark/
       backend/
       context/
       memory/
-      sandbox/
-      trace/
+      tool/
+      ui/
     shared/
-      algebra/
-      rendering/
+      config/
       serialization/
+      ui/
   adapters/
     inbound/
       terminal/jline/
@@ -103,8 +101,8 @@ To ensure Tark remains an exceptional educational platform and reference impleme
 
 ### 4. Direct Composition and Fakes over Mocking
 - Avoid mock frameworks (like Mockito or ScalaMock) which weaken typing and produce fragile tests.
-- For outbound ports in tests, write explicit, simple, and strongly typed fake implementations under `src/test/scala/com/tark/support/Fakes.scala`. Fakes should record calls and provide programmable static responses.
+- For outbound ports in tests, write explicit, simple, and strongly typed fake implementations in the relevant spec. Fakes should record calls and provide programmable static responses when behavior verification matters.
 
-### 5. Deterministic Law Testing
-- Typeclass algebras (like `Serializable`, `Sink`, `Formattable`, `ConfigOps`) must be validated against algebraic laws (e.g., identity, determinism, last-write-wins).
-- Include law-assertion tests in your test suites using shared test behaviors or traits (such as `PortLawChecks`).
+### 5. Focused Deterministic Testing
+- Protocol values, serialization, UI formatting, and adapter behavior must be covered by deterministic tests.
+- Prefer small direct tests over broad compatibility law suites while the project is still early-stage.

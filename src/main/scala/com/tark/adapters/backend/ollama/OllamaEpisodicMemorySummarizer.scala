@@ -4,7 +4,8 @@ import cats.effect.Sync
 import cats.syntax.all.*
 import com.tark.domain.Interaction
 import com.tark.domain.memory.EpisodeSummary
-import com.tark.ports.outbound.backend.LlmClient
+import com.tark.domain.tool.OpenAIMessage
+import com.tark.ports.outbound.backend.{LlmClient, Prompt}
 import com.tark.ports.outbound.memory.{EpisodicMemorySummarizer, MemoryPrompt}
 
 /**
@@ -19,23 +20,19 @@ class OllamaEpisodicMemorySummarizer[F[_]: Sync](client: LlmClient[F]) extends E
     val userPrompt = MemoryPrompt.summarizationUserPrompt(formattedHistory)
     val F = summon[Sync[F]]
 
-    client.getCompletion(userPrompt, List.empty, systemPrompt, List.empty).flatMap {
-      case Left(textResponse) =>
-        val (summary, takeaways) = MemoryPrompt.parseSummarizerOutput(textResponse)
-        for {
-          now <- F.delay(System.currentTimeMillis())
-        } yield EpisodeSummary(sessionId, now, summary, takeaways)
+    val prompt = Prompt(
+      messages = List(
+        OpenAIMessage(role = "system", content = Some(systemPrompt)),
+        OpenAIMessage(role = "user", content = Some(userPrompt))
+      ),
+      availableTools = List.empty
+    )
 
-      case Right(_) =>
-        // Fallback in case the LLM returned a tool call unexpectedly during summarization
-        for {
-          now <- F.delay(System.currentTimeMillis())
-        } yield EpisodeSummary(
-          sessionId = sessionId,
-          timestamp = now,
-          summary = "Failed to summarize: LLM returned a tool call instead of raw text.",
-          keyTakeaways = List.empty
-        )
+    client.chat(prompt).flatMap { response =>
+      val (summary, takeaways) = MemoryPrompt.parseSummarizerOutput(response.content)
+      for {
+        now <- F.delay(System.currentTimeMillis())
+      } yield EpisodeSummary(sessionId, now, summary, takeaways)
     }
   }
 }

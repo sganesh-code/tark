@@ -50,7 +50,7 @@ class MemorySerializationSpec extends FunSuite {
     )
 
     val context = Context(
-      tools = Map.empty,
+      tools = List.empty,
       memory = originalMemory,
       history = List.empty
     )

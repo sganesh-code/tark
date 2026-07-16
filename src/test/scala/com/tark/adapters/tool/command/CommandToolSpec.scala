@@ -1,25 +1,37 @@
 package com.tark.adapters.tool.command
 
-import com.tark.application.instances.all.given
+import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import com.tark.domain.context.Context
-import com.tark.domain.tool.{Tool, ToolContext}
-import com.tark.ports.shared.tool.ToolExecutor
+import com.tark.domain.memory.Memory
+import com.tark.domain.tool.{ToolCall, ToolCallFunction}
 import munit.FunSuite
 
 class CommandToolSpec extends FunSuite {
-  test("CommandTool.stripQuotes: correctly strips wrapping quotes or backticks from commands") {
-    assertEquals(CommandTool.stripQuotes("'ls -la'"), "ls -la")
-    assertEquals(CommandTool.stripQuotes("\"pwd\""), "pwd")
-    assertEquals(CommandTool.stripQuotes("`echo hello`"), "echo hello")
-    assertEquals(CommandTool.stripQuotes("ls -la"), "ls -la")
+  test("commandFrom extracts command argument from ToolCall JSON") {
+    val call = ToolCall("call_1", "function", ToolCallFunction("command_executor", """{"command":"echo hello"}"""))
+
+    assertEquals(CommandTool.commandFrom(call), Right("echo hello"))
   }
 
-  test("CommandTool.generic: supports shell pipelines (e.g. ls | grep)") {
-    val tool = CommandTool.generic
-    val context = Context(Map.empty, Map.empty, List.empty)
-    val toolContext = ToolContext(context, Map("command" -> "echo 'build.sbt' | grep build.sbt"), "exec_1")
+  test("commandFrom reports missing command without leaking Circe decoding failures") {
+    val call = ToolCall("call_1", "function", ToolCallFunction("command_executor", """{"cmd":"echo hello"}"""))
 
-    val result = summon[ToolExecutor[Tool]].execute(tool, toolContext)
-    assertEquals(result.trim, "build.sbt")
+    assertEquals(CommandTool.commandFrom(call), Left("Tool argument 'command' is missing."))
+  }
+
+  test("commandFrom reports empty command") {
+    val call = ToolCall("call_1", "function", ToolCallFunction("command_executor", """{"command":"   "}"""))
+
+    assertEquals(CommandTool.commandFrom(call), Left("Tool argument 'command' is empty."))
+  }
+
+  test("execute runs command and returns ToolResult content") {
+    val call = ToolCall("call_1", "function", ToolCallFunction("command_executor", """{"command":"printf tark"}"""))
+    val context = Context(List(CommandTool.definition), Memory(), List.empty)
+
+    val result = CommandTool.execute[IO](context, call).unsafeRunSync()
+
+    assertEquals(result.content, "tark")
   }
 }

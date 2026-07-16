@@ -3,10 +3,9 @@ package com.tark.ports.shared.ui
 import com.tark.application.instances.all.given
 
 import com.tark.domain.ui.{Cell, Color, Screen, Style}
-import com.tark.support.PortLawChecks
 import munit.FunSuite
 
-class FormattableSpec extends FunSuite with PortLawChecks {
+class FormattableSpec extends FunSuite {
 
   private def screenSnapshot(screen: Screen): Vector[Vector[Cell]] =
     (0 until screen.height).map { y =>
@@ -110,10 +109,8 @@ class FormattableSpec extends FunSuite with PortLawChecks {
     val cell = Cell("T", fg = Color.Red, bg = Color.Blue, styles = Set(Style.Bold))
     val rendered = renderer.render(cell)
 
-    assertRendererDeterministic[Cell, String](cell)
-    assertRendererIncludes(cell, List("31", "44", "1", "T"))
-
     // Ensure red foreground (31), blue background (44), and bold (1) are present in the ANSI string
+    assertEquals(renderer.render(cell), rendered)
     assert(rendered.contains("31"))
     assert(rendered.contains("44"))
     assert(rendered.contains("1"))
@@ -124,9 +121,6 @@ class FormattableSpec extends FunSuite with PortLawChecks {
 
   test("Formattable[Cell] laws: identity, field preservation, last-write-wins, and idempotence") {
     val cell = Cell("A", fg = Color.Green, bg = Color.Black, styles = Set(Style.Bold))
-
-    assertFormattableIdentity(cell)
-    assertFormattableLastWriteWins(cell, Color.Red, Color.Blue)(identity)
 
     assertEquals(cell.formatted(), cell)
 
@@ -149,12 +143,6 @@ class FormattableSpec extends FunSuite with PortLawChecks {
       bg = Some(Color.BrightBlack),
       styles = Some(Set(Style.Italic))
     )
-    assertFormattableIdempotence(
-      cell,
-      fg = Some(Color.Cyan),
-      bg = Some(Color.BrightBlack),
-      styles = Some(Set(Style.Italic))
-    )(identity)
     assertEquals(twice, once)
   }
 
@@ -166,21 +154,17 @@ class FormattableSpec extends FunSuite with PortLawChecks {
     )
 
     messages.foreach { message =>
-      assertFormattableIdentity(message)
-      assertFormattableIdempotence(
-        message,
-        fg = Some(Color.BrightYellow),
-        bg = Some(Color.Black),
-        styles = Some(Set(Style.Underline))
-      )(m => (m.getClass, m.text, m.fg, m.bg, m.styles))
+      assertEquals(message.formatted(), message)
 
       val formatted = message.withFg(Color.BrightYellow).withBg(Color.Black).withStyle(Style.Underline)
+      val formattedAgain = formatted.withFg(Color.BrightYellow).withBg(Color.Black).withStyle(Style.Underline)
 
       assertEquals(formatted.getClass, message.getClass)
       assertEquals(formatted.text, message.text)
       assertEquals(formatted.fg, Color.BrightYellow)
       assertEquals(formatted.bg, Color.Black)
       assertEquals(formatted.styles, Set(Style.Underline))
+      assertEquals(formattedAgain, formatted)
     }
   }
 
@@ -197,13 +181,6 @@ class FormattableSpec extends FunSuite with PortLawChecks {
       bg = Some(Color.Black),
       styles = Some(Set(Style.Italic))
     )
-
-    assertFormattableIdempotence(
-      screen,
-      fg = Some(Color.Green),
-      bg = Some(Color.Black),
-      styles = Some(Set(Style.Italic))
-    )(screenSnapshot)
 
     assertEquals(formatted.width, 2)
     assertEquals(formatted.height, 2)
