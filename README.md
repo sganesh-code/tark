@@ -70,7 +70,7 @@ Tark is built using a decoupled port-and-adapter architecture:
 
 ### Component Breakdown
 1.  **`TarkCLI` / `JLineFrontend`:** Manages the terminal rendering layer, keystrokes, scroll offsets, and visual styling.
-2.  **`InputProcessor` / `DefaultInputProcessor`:** The inbound port defines chat input processing; the default application service routes slash commands and runs the Blog-style prompt/tool loop.
+2.  **`InputProcessor` / `DefaultInputProcessor`:** The inbound port defines chat input processing; the default application service routes slash commands and runs the prompt/tool loop.
 3.  **`Prompt` / `LLMResponse` / `ToolCall` / `ToolResult`:** The core LLM protocol keeps assistant text and native tool calls together.
 4.  **`CommandExecutor`:** Outbound port for executing `command_executor` tool calls through Docker, local process execution, or a fake in tests.
 5.  **`OllamaLlmClient`:** Interfaces with the local Ollama OpenAI-compatible chat endpoint.
@@ -100,7 +100,7 @@ Ports are split by direction:
 
 ## 🔄 State Machine & Convergence Rules
 
-Tark executes a compact Blog-style tool loop:
+Tark executes a compact prompt/tool loop:
 
 ```
 [Prompt] -> [LLMResponse(content, no tool calls)] -> [Persist assistant message]
@@ -144,8 +144,10 @@ Tark can be customized via the following environment variables:
 
 We welcome contributions! Please adhere to the following workspace development standards:
 
-### 1. Adding a Custom Tool
-To add a tool, define its OpenAI-compatible `ToolDefinition` and provide an outbound executor port implementation:
+### 1. Adding a Command Tool
+Command tools are exposed to the model as OpenAI-compatible `ToolDefinition` values and executed through an outbound port. The current command capability is `command_executor`, implemented by `CommandTool` through the `CommandExecutor[F]` port.
+
+Define the tool schema in `com.tark.domain.tool` terms:
 ```scala
 val myTool = ToolDefinition(
   `type` = "function",
@@ -157,17 +159,50 @@ val myTool = ToolDefinition(
 )
 ```
 
-### 2. Thread Safety Rules (Cats Effect Blocking)
+Then provide an executor implementation in an adapter package, not in `domain`, `application`, or `ports`:
+
+```scala
+given myCommandExecutor[F[_]: Sync]: CommandExecutor[F] with {
+  override def definition: ToolDefinition = myTool
+
+  override def execute(context: Context, toolCall: ToolCall): F[ToolResult] =
+    Sync[F].blocking {
+      // Parse toolCall.function.arguments and run the effectful capability here.
+      ToolResult("result returned to the model")
+    }
+}
+```
+
+Register the tool definition when creating the session context. For the default command tool this happens in `DefaultSessionProvider`:
+
+```scala
+Context(List(CommandTool.definition), existingMemory, List.empty, Some(sandbox))
+```
+
+Keep argument parsing tolerant. Model responses are not guaranteed to be complete or valid, so prefer `Option` decoders and return a clear `ToolResult` such as `Command failed: Tool argument 'command' is missing.` instead of leaking raw decoder failures into the UI.
+
+### 2. Extending Tark with New Capabilities
+Use the layer that matches the capability:
+
+*   **New model/backend:** add an outbound port only if the existing `LlmClient[F]` contract is not enough; otherwise add a backend adapter like `OllamaLlmClient`.
+*   **New tool/capability:** add a `ToolDefinition`, an outbound executor port if the capability is not command-like, and a concrete adapter implementation.
+*   **New slash command:** add a `SlashCommand[F]` implementation and include it in the default command list.
+*   **New terminal behavior:** extend keyboard handling or layout code without changing `JLineFrontend` unless terminal ownership itself needs to change.
+*   **New persistence behavior:** implement or compose a `Sink`/serialization boundary instead of writing files from application code.
+
+Keep dependency direction intact: application code may depend on ports, but not adapters. Concrete technology choices such as Docker, local process execution, STTP, JLine, and filesystem details belong in `adapters` or `bootstrap`.
+
+### 3. Thread Safety Rules (Cats Effect Blocking)
 Tark runs on a high-performance Cats Effect work-stealing pool. **Never execute blocking, synchronous I/O or system process builds inside plain `IO { ... }` or `F.delay { ... }` blocks.**
 *   Always wrap blocking I/O, process calls, or disk writes in `IO.blocking { ... }` (or `Sync[F].blocking { ... }`).
 *   Restoring terminal states or closeable handles must be modeled using `Resource.make`.
 
-### 3. Ports and Focused Tests
+### 4. Ports and Focused Tests
 When adding or changing a port:
 *   Keep provider-specific behavior in adapter packages; ports should describe the protocol boundary, not an Ollama, Docker, or terminal implementation detail.
 *   Add focused MUnit coverage around protocol JSON, state transitions, and adapter behavior.
 
-### 4. Hexagonal Architecture Guardrails
+### 5. Hexagonal Architecture Guardrails
 We statically enforce package dependency rules using architecture tests. Any changes that violate layer boundaries (e.g., `domain` importing `ports`, `ports` importing `adapters`) will fail the build. Run `sbt "testOnly com.tark.architecture.HexagonalBoundarySpec"` to verify compliance.
 
 ---
