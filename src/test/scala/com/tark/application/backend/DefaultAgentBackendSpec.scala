@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import com.tark.application.time.Clock
 import com.tark.domain.context.{Context, Session}
 import com.tark.domain.memory.{EpisodeSummary, Memory}
-import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, ToolCall, ToolCallFunction, ToolDefinition, ToolResult}
+import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult}
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
@@ -56,7 +56,7 @@ class DefaultAgentBackendSpec extends FunSuite {
 
     given LlmClient[IO] with {
       override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
-        IO.pure(LLMResponse("plain answer", List.empty))
+        IO.pure(LLMResponse("plain answer", List.empty, OpenAIUsage(10, 5, 15)))
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
@@ -70,6 +70,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     assertEquals(tasks, List(Some("Waiting for assistant response"), Some("Finalizing assistant response"), Some("Persisting session")))
     assert(actions.exists { case AgentAction.AssistantDelta("plain answer") => true; case _ => false })
     assert(actions.exists { case AgentAction.AssistantEnd() => true; case _ => false })
+    assert(actions.contains(AgentAction.StatusUpdate("LLM Usage: Prompt 10 | Completion 5 | Total 15")))
 
     val persisted = written.get
     val working = persisted.memory.working.get
@@ -163,8 +164,8 @@ class DefaultAgentBackendSpec extends FunSuite {
       override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
         IO.delay {
           chatCalls = chatCalls + 1
-          if chatCalls == 1 then LLMResponse("I need a tool", List(toolCall))
-          else LLMResponse("final answer", List.empty)
+          if chatCalls == 1 then LLMResponse("I need a tool", List(toolCall), OpenAIUsage(5, 5, 10))
+          else LLMResponse("final answer", List.empty, OpenAIUsage(3, 2, 5))
         }
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
@@ -323,7 +324,7 @@ class DefaultAgentBackendSpec extends FunSuite {
 
     given LlmClient[IO] with {
       override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
-        IO.pure(LLMResponse("fallback answer", List.empty))
+        IO.pure(LLMResponse("fallback answer", List.empty, OpenAIUsage(2, 2, 4)))
     }
 
     given StreamingLlmClient[IO] with {
@@ -341,6 +342,48 @@ class DefaultAgentBackendSpec extends FunSuite {
     assert(actions.exists { case AgentAction.SystemMessage(text) if text.contains("Falling back to buffered response") => true; case _ => false })
     assert(actions.exists { case AgentAction.Log("fallback answer") => true; case _ => false })
     assertEquals(written.get.history.map(_.output), List("fallback answer"))
+  }
+
+  test("DefaultAgentBackend accumulates usage over multiple LLM calls") {
+    var written: Option[Context] = None
+
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.delay {
+        written = Some(data)
+      }
+    }
+
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.raiseError(new AssertionError("summarizer should not be invoked"))
+    }
+
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(1000L)
+    }
+
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.pure(LLMResponse("answer", List.empty, OpenAIUsage(10, 5, 15)))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+
+    val actions = (for {
+      backend <- DefaultAgentBackend.create[IO](session)
+      results1 <- executeSequentially(backend, "first prompt")
+      results2 <- executeSequentially(backend, "second prompt")
+    } yield (results1 ++ results2).flatMap(_._2)).unsafeRunSync()
+
+    assert(actions.contains(AgentAction.StatusUpdate("LLM Usage: Prompt 10 | Completion 5 | Total 15")))
+    assert(actions.contains(AgentAction.StatusUpdate("LLM Usage: Prompt 20 | Completion 10 | Total 30")))
   }
 
   private def executeSequentially(

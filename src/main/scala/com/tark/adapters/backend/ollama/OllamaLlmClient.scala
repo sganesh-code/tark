@@ -36,12 +36,14 @@ class OllamaLlmClient(
         case Right(payload) =>
           LLMResponse(
             content = payload.choices.flatMap(_.message.content).mkString("\n"),
-            results = payload.choices.flatMap(_.message.tool_calls.getOrElse(Nil))
+            results = payload.choices.flatMap(_.message.tool_calls.getOrElse(Nil)),
+            usage = payload.usage
           )
         case Left(error) =>
           LLMResponse(
             content = s"HTTP Error running Ollama: ${error.getMessage}",
-            results = List.empty
+            results = List.empty,
+            usage = OpenAIUsage(0, 0, 0)
           )
       }
     }
@@ -54,7 +56,8 @@ class OllamaLlmClient(
         model = modelName,
         messages = prompt.messages,
         tools = prompt.availableTools,
-        stream = Some(true)
+        stream = Some(true),
+        stream_options = Some(StreamOptions(include_usage = true))
       ))
       .response(asStreamUnsafe(Fs2Streams[IO]))
       .readTimeout(scala.concurrent.duration.Duration.Inf)
@@ -86,7 +89,10 @@ class OllamaLlmClient(
 }
 
 object OllamaLlmClient {
-  private final case class ChatCompletionChunk(choices: List[StreamChoice])
+  private final case class ChatCompletionChunk(
+    choices: List[StreamChoice],
+    usage: Option[OpenAIUsage] = None
+  )
   private final case class StreamChoice(index: Int, delta: StreamDelta, finish_reason: Option[String] = None)
   private final case class StreamDelta(
     role: Option[String] = None,
@@ -112,7 +118,7 @@ object OllamaLlmClient {
 
   private[ollama] def eventsFromPayload(payload: String): Either[String, List[LlmStreamEvent]] =
     decode[ChatCompletionChunk](payload).left.map(_.getMessage).map { chunk =>
-      chunk.choices.flatMap { choice =>
+      val contentEvents = chunk.choices.flatMap { choice =>
         val contentEvents =
           choice.delta.content.filter(_.nonEmpty).map(LlmStreamEvent.ContentDelta.apply).toList
         val toolEvents =
@@ -127,5 +133,7 @@ object OllamaLlmClient {
           }
         contentEvents ++ toolEvents
       }
+      val usageEvent = chunk.usage.map(LlmStreamEvent.Usage.apply).toList
+      contentEvents ++ usageEvent
     }
 }

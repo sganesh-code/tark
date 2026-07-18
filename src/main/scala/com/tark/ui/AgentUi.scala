@@ -1,5 +1,6 @@
 package com.tark.ui
 
+import com.tark.ports.AgentBackend
 import fs2.Stream
 
 sealed trait AgentAction[F[_]]
@@ -11,6 +12,7 @@ object AgentAction:
   final case class SystemMessage[F[_]](text: String) extends AgentAction[F]
   final case class ClearScreen[F[_]]() extends AgentAction[F]
   final case class Exit[F[_]]() extends AgentAction[F]
+  final case class StatusUpdate[F[_]](text: String) extends AgentAction[F]
   final case class RequestChoice[F[_]](
     prompt: String,
     options: List[String],
@@ -24,4 +26,4 @@ final case class AgentTask[F[_]](
 )
 
 trait AgentFrontend[F[_]]:
-  def handleInput(input: String): F[Unit]
+  def handleInput(input: String)(using AgentBackend[F]): F[Unit]

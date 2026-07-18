@@ -24,6 +24,7 @@ trait Schedulable[F[_]]:
 trait TerminalStatus[F[_]]:
   def update(content: String): F[Unit]
   def clear(): F[Unit]
+  def updatePersistent(content: String): F[Unit] = update(content)
 
 trait Spinner[F[_], A]:
   def create(frame: A, message: String)(using

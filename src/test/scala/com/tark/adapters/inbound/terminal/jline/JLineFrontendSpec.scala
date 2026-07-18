@@ -14,25 +14,25 @@ class JLineFrontendSpec extends FunSuite {
   test("JLineFrontend executes backend actions through terminal typeclasses") {
     val events = ArrayBuffer.empty[String]
 
+    given backend: AgentBackend[IO] with {
+      override def registerCompletions(update: List[String] => IO[Unit]): IO[Unit] = IO.unit
+      override def handleInput(input: String): Stream[IO, AgentTask[IO]] =
+        Stream.emit(
+          AgentTask(
+            Some("working"),
+            Stream(
+              AgentAction.Log("agent text"),
+              AgentAction.SystemMessage("system text"),
+              AgentAction.ClearScreen(),
+              AgentAction.Exit()
+            )
+          )
+        )
+    }
+
     val program = for {
       exitRequested <- Ref.of[IO, Boolean](false)
       frontend = {
-        given AgentBackend[IO] with {
-          override def registerCompletions(update: List[String] => IO[Unit]): IO[Unit] = IO.unit
-          override def handleInput(input: String): Stream[IO, AgentTask[IO]] =
-            Stream.emit(
-              AgentTask(
-                Some("working"),
-                Stream(
-                  AgentAction.Log("agent text"),
-                  AgentAction.SystemMessage("system text"),
-                  AgentAction.ClearScreen(),
-                  AgentAction.Exit()
-                )
-              )
-            )
-        }
-
         given Schedulable[IO] with {
           override def schedule(task: IO[Unit], delay: FiniteDuration, period: FiniteDuration): IO[Unit] = task
         }
@@ -96,25 +96,25 @@ class JLineFrontendSpec extends FunSuite {
   test("JLineFrontend renders assistant deltas as one inline message") {
     val events = ArrayBuffer.empty[String]
 
+    given backend: AgentBackend[IO] with {
+      override def registerCompletions(update: List[String] => IO[Unit]): IO[Unit] = IO.unit
+      override def handleInput(input: String): Stream[IO, AgentTask[IO]] =
+        Stream.emit(
+          AgentTask(
+            None,
+            Stream(
+              AgentAction.AssistantDelta("Now"),
+              AgentAction.AssistantDelta(" let"),
+              AgentAction.AssistantDelta(" me"),
+              AgentAction.AssistantEnd()
+            )
+          )
+        )
+    }
+
     val program = for {
       exitRequested <- Ref.of[IO, Boolean](false)
       frontend = {
-        given AgentBackend[IO] with {
-          override def registerCompletions(update: List[String] => IO[Unit]): IO[Unit] = IO.unit
-          override def handleInput(input: String): Stream[IO, AgentTask[IO]] =
-            Stream.emit(
-              AgentTask(
-                None,
-                Stream(
-                  AgentAction.AssistantDelta("Now"),
-                  AgentAction.AssistantDelta(" let"),
-                  AgentAction.AssistantDelta(" me"),
-                  AgentAction.AssistantEnd()
-                )
-              )
-            )
-        }
-
         given Schedulable[IO] with {
           override def schedule(task: IO[Unit], delay: FiniteDuration, period: FiniteDuration): IO[Unit] = task
         }
@@ -167,5 +167,19 @@ class JLineFrontendSpec extends FunSuite {
       events.toList,
       List("inline-start:Agent", "inline:Now", "inline: let", "inline: me", "inline-end")
     )
+  }
+
+  test("JLineTerminalStatus combines active spinner and persistent status") {
+    import org.jline.terminal.TerminalBuilder
+    val terminal = TerminalBuilder.builder().dumb(true).build()
+    val status = JLineTerminalStatus(terminal)
+
+    val program = for {
+      _ <- status.updatePersistent("Usage info")
+      _ <- status.update("Loading")
+      _ <- status.clear()
+    } yield ()
+
+    program.unsafeRunSync()
   }
 }

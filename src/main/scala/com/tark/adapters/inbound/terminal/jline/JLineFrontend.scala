@@ -181,16 +181,41 @@ object JLineTerminalWriter:
 
 final class JLineTerminalStatus(terminal: Terminal) extends TerminalStatus[IO]:
   private val status: Option[Status] = Option(Status.getStatus(terminal))
+  @volatile private var activeSpinner: String = ""
+  @volatile private var persistentStatus: String = ""
+
+  private def redraw(): Unit = {
+    val parts = List(
+      Option(activeSpinner).filter(_.nonEmpty),
+      Option(persistentStatus).filter(_.nonEmpty)
+    ).flatten
+    status.foreach { s =>
+      if (parts.isEmpty) {
+        s.update(Collections.emptyList())
+      } else {
+        val combined = parts.mkString(" | ")
+        s.update(Collections.singletonList(AttributedString.fromAnsi(s"\u001b[33m$combined\u001b[0m")))
+      }
+    }
+  }
 
   override def update(content: String): IO[Unit] =
     IO.blocking {
-      status.foreach { s =>
-        s.update(Collections.singletonList(AttributedString.fromAnsi(s"\u001b[33m$content\u001b[0m")))
-      }
+      activeSpinner = content
+      redraw()
     }
 
   override def clear(): IO[Unit] =
-    IO.blocking(status.foreach(_.update(Collections.emptyList())))
+    IO.blocking {
+      activeSpinner = ""
+      redraw()
+    }
+
+  override def updatePersistent(content: String): IO[Unit] =
+    IO.blocking {
+      persistentStatus = content
+      redraw()
+    }
 
 final class SimpleSpinner(delay: FiniteDuration, period: FiniteDuration) extends Spinner[IO, SpinnerFrames]:
   override def create(frame: SpinnerFrames, message: String)(using
@@ -247,7 +272,7 @@ final class JLineFrontend(
 
   private val frames = SpinnerFrames(Vector("|", "/", "-", "\\"))
 
-  override def handleInput(input: String): IO[Unit] = {
+  override def handleInput(input: String)(using backend: AgentBackend[IO]): IO[Unit] = {
     val cleanInput = input.trim
     if cleanInput.isEmpty then IO.unit
     else
@@ -292,6 +317,9 @@ final class JLineFrontend(
 
         case AgentAction.Exit() =>
           closeInline >> exitRequested.set(true)
+
+        case AgentAction.StatusUpdate(text) =>
+          status.updatePersistent(text)
 
         case AgentAction.RequestChoice(prompt, options, allowCustom, onSelected) =>
           closeInline >> reader.readChoice(prompt, options, allowCustom).flatMap(choice => executeActions(onSelected(choice)))

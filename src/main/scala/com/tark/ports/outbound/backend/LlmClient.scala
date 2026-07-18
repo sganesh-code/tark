@@ -1,7 +1,7 @@
 package com.tark.ports.outbound.backend
 
 import cats.Monad
-import com.tark.domain.tool.{OpenAIMessage, ToolCall, ToolDefinition}
+import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolDefinition}
 import fs2.Stream
 import io.circe.parser
 
@@ -16,7 +16,8 @@ case class Prompt(
 
 case class LLMResponse[A](
   content: String,
-  results: List[A]
+  results: List[A],
+  usage: OpenAIUsage
 )
 
 type LlmClient[F[_]] = LLMClient[F, Prompt, LLMResponse[ToolCall]]
@@ -35,6 +36,7 @@ object LlmStreamEvent:
   ) extends LlmStreamEvent
   final case class Completed(response: Option[LLMResponse[ToolCall]] = None) extends LlmStreamEvent
   final case class Failed(message: String) extends LlmStreamEvent
+  final case class Usage(usage: OpenAIUsage) extends LlmStreamEvent
 
 trait StreamingLlmClient[F[_]]:
   def chatStream(prompt: Prompt): Stream[F, LlmStreamEvent]

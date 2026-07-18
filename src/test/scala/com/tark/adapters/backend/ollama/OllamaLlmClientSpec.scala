@@ -30,4 +30,15 @@ class OllamaLlmClientSpec extends FunSuite {
       )
     )
   }
+
+  test("eventsFromPayload decodes streaming usage") {
+    val payload =
+      """{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34,"total_tokens":46}}"""
+
+    import com.tark.domain.tool.OpenAIUsage
+    assertEquals(
+      OllamaLlmClient.eventsFromPayload(payload),
+      Right(List(LlmStreamEvent.Usage(OpenAIUsage(12, 34, 46))))
+    )
+  }
 }

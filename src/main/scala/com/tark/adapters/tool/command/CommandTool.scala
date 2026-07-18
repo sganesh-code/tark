@@ -29,7 +29,7 @@ object CommandTool {
     )
   )
 
-  def stripQuotes(s: String): String = {
+  private def stripQuotes(s: String): String = {
     val trimmed = s.trim
     if (
       (trimmed.startsWith("'") && trimmed.endsWith("'")) ||

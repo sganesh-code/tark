@@ -6,10 +6,10 @@ import com.tark.application.time.Clock
 import com.tark.domain.AgentState
 import com.tark.domain.Interaction
 import com.tark.domain.context.{Context, Session}
-import com.tark.domain.tool.{OpenAIMessage, ToolCall, ToolCallFunction, ToolResult}
+import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolCallFunction, ToolResult}
 import com.tark.ports.AgentBackend
 import com.tark.ports.inbound.tool.SessionMemoryTransitions
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, ToolCallAccumulator}
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, ToolCallAccumulator, GroundedPrompt}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.ports.outbound.tool.CommandExecutor
 import com.tark.ports.shared.serialization.Sink
@@ -21,7 +21,8 @@ import java.nio.file.Path
 
 final class DefaultAgentBackend[F[_]: Sync] private (
   sessionRef: Ref[F, Session],
-  updateCompletionsRef: Ref[F, List[String] => F[Unit]]
+  updateCompletionsRef: Ref[F, List[String] => F[Unit]],
+  usageRef: Ref[F, OpenAIUsage]
 )(using
   sink: Sink[F, Context, Path],
   summarizer: EpisodicMemorySummarizer[F],
@@ -189,10 +190,14 @@ final class DefaultAgentBackend[F[_]: Sync] private (
       )
     else
       Stream.eval(Ref.of[F, Option[LLMResponse[ToolCall]]](None)).flatMap { responseRef =>
+        val basePrompt = Prompt(messages, context.tools)
+        val goalQuery = context.memory.working.map(_.goal).filter(_.nonEmpty).getOrElse(originalUserInput(messages))
+        val groundedPrompt = GroundedPrompt.compile(basePrompt, context.memory, goalQuery)
+
         val responseTask = AgentTask(
           description = Some(if depth == 0 then "Waiting for assistant response" else "Waiting for assistant response after tool results"),
           action =
-            collectStreamingResponse(Prompt(messages, context.tools), responseRef)
+            collectStreamingResponse(groundedPrompt, responseRef)
         )
 
         Stream.emit(responseTask) ++
@@ -315,11 +320,20 @@ final class DefaultAgentBackend[F[_]: Sync] private (
       .map(content => Vector(AgentAction.Log(content)))
       .getOrElse(Vector.empty)
 
+  private def updateUsageAndGetStatus(usage: OpenAIUsage): F[String] =
+    usageRef.updateAndGet(curr =>
+      OpenAIUsage(
+        curr.prompt_tokens + usage.prompt_tokens,
+        curr.completion_tokens + usage.completion_tokens,
+        curr.total_tokens + usage.total_tokens
+      )
+    ).map(u => s"LLM Usage: Prompt ${u.prompt_tokens} | Completion ${u.completion_tokens} | Total ${u.total_tokens}")
+
   private def collectStreamingResponse(
     prompt: Prompt,
     responseRef: Ref[F, Option[LLMResponse[ToolCall]]]
-  ): Stream[F, AgentAction[F]] =
-    Stream
+  ): Stream[F, AgentAction[F]] = {
+    val responseStream = Stream
       .eval(Ref.of[F, StreamingResponseState](StreamingResponseState.empty))
       .flatMap { stateRef =>
         streamingLlmClient
@@ -332,6 +346,16 @@ final class DefaultAgentBackend[F[_]: Sync] private (
             fallbackBufferedResponse(prompt, responseRef, s"Streaming failed: ${error.getMessage}. Falling back to buffered response.")
           }
       }
+
+    responseStream ++ Stream.eval(responseRef.get).flatMap {
+      case Some(response) =>
+        Stream.eval(updateUsageAndGetStatus(response.usage)).flatMap { statusText =>
+          Stream.emit(AgentAction.StatusUpdate(statusText))
+        }
+      case None =>
+        Stream.empty
+    }
+  }
 
   private def handleStreamEvent(
     prompt: Prompt,
@@ -349,6 +373,9 @@ final class DefaultAgentBackend[F[_]: Sync] private (
       case delta: LlmStreamEvent.ToolCallDelta =>
         stateRef.update(_.appendToolDelta(delta)).as(Vector.empty)
 
+      case LlmStreamEvent.Usage(usage) =>
+        stateRef.update(_.withUsage(usage)).as(Vector.empty)
+
       case LlmStreamEvent.Completed(Some(response)) =>
         responseRef.set(Some(response)).as(Vector(AgentAction.AssistantEnd()))
 
@@ -359,7 +386,7 @@ final class DefaultAgentBackend[F[_]: Sync] private (
               responseRef.set(Some(response)).as(Vector(AgentAction.AssistantEnd()))
             case Left(errors) =>
               val message = errors.mkString(" ")
-              val response = LLMResponse(s"Streaming tool call failed: $message", List.empty[ToolCall])
+              val response = LLMResponse(s"Streaming tool call failed: $message", List.empty[ToolCall], OpenAIUsage(0, 0, 0))
               responseRef.set(Some(response)).as(Vector(AgentAction.AssistantEnd(), AgentAction.SystemMessage(response.content)))
           }
         }
@@ -470,7 +497,8 @@ object DefaultAgentBackend {
     for {
       sessionRef <- Ref.of[F, Session](session)
       updateRef <- Ref.of[F, List[String] => F[Unit]](_ => Sync[F].unit)
-    } yield DefaultAgentBackend(sessionRef, updateRef)
+      usageRef <- Ref.of[F, OpenAIUsage](OpenAIUsage(0, 0, 0))
+    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
     sink: Sink[F, Context, Path],
@@ -485,7 +513,8 @@ object DefaultAgentBackend {
 
   private final case class StreamingResponseState(
     content: String,
-    toolCalls: ToolCallAccumulator
+    toolCalls: ToolCallAccumulator,
+    usage: OpenAIUsage = OpenAIUsage(0, 0, 0)
   ) {
     def appendContent(delta: String): StreamingResponseState =
       copy(content = content + delta)
@@ -493,8 +522,11 @@ object DefaultAgentBackend {
     def appendToolDelta(delta: LlmStreamEvent.ToolCallDelta): StreamingResponseState =
       copy(toolCalls = toolCalls.add(delta))
 
+    def withUsage(u: OpenAIUsage): StreamingResponseState =
+      copy(usage = u)
+
     def toResponse: Either[List[String], LLMResponse[ToolCall]] =
-      toolCalls.complete.map(calls => LLMResponse(content, calls))
+      toolCalls.complete.map(calls => LLMResponse(content, calls, usage))
   }
 
   private object StreamingResponseState {
