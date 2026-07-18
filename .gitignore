@@ -38,9 +38,10 @@ build/
 .DS_Store
 Thumbs.db
 
-# Tark Traces and Logs
+# Tark Traces, Logs, and Plans
 react-trace-*.log
 react-trace-*.md
 *.log
 sessions/
 test-sessions/
+implementation-*.md
