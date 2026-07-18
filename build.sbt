@@ -17,6 +17,7 @@ lazy val root = rootProject
       "com.softwaremill.sttp.client3" %% "core" % "3.10.3",
       "com.softwaremill.sttp.client3" %% "circe" % "3.10.3",
       "com.softwaremill.sttp.client3" %% "cats" % "3.10.3", // For functional IO backend wrapper
+      "com.softwaremill.sttp.client3" %% "async-http-client-backend-fs2" % "3.10.3",
       "io.circe" %% "circe-generic" % "0.14.9",
        "org.jline" % "jline" % "3.30.6"
     )

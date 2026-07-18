@@ -34,6 +34,7 @@ class HexagonalBoundarySpec extends FunSuite {
       
       // Determine layer from file path
       val layerOpt = if (pathStr.contains("/com/tark/domain/")) Some("domain")
+                     else if (pathStr.contains("/com/tark/ui/")) Some("ui")
                      else if (pathStr.contains("/com/tark/application/")) Some("application")
                      else if (pathStr.contains("/com/tark/ports/")) Some("ports")
                      else if (pathStr.contains("/com/tark/adapters/")) Some("adapters")
@@ -63,6 +64,14 @@ class HexagonalBoundarySpec extends FunSuite {
                 if (imported.startsWith("com.tark.adapters") ||
                     imported.startsWith("com.tark.bootstrap")) {
                   violations += s"[Layer Violation] application file $file:${lineNum + 1} imports '$imported'"
+                }
+
+              case "ui" =>
+                // 2a. com.tark.ui is portable frontend language and must not import concrete layers.
+                if (imported.startsWith("com.tark.adapters") ||
+                    imported.startsWith("com.tark.bootstrap") ||
+                    imported.startsWith("com.tark.application")) {
+                  violations += s"[Layer Violation] ui file $file:${lineNum + 1} imports '$imported'"
                 }
 
               case "ports" =>

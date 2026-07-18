@@ -5,19 +5,13 @@ import com.tark.adapters.context.DefaultSessionProvider.given
 import com.tark.adapters.context.SessionProviderSettings
 import com.tark.adapters.inbound.terminal.jline.JLineFrontend
 import com.tark.adapters.tool.command.CommandTool.given
-import com.tark.adapters.ui.ScreenWriterInstances.given
-import com.tark.application.chat.DefaultInputProcessor.given
+import com.tark.application.backend.DefaultAgentBackend
 import com.tark.application.instances.all.given
 import com.tark.application.time.Clock.given
 import com.tark.bootstrap.OllamaRuntime.given
 import com.tark.domain.Config
-import com.tark.ports.inbound.tool.SlashCommand.given
-import com.tark.ports.inbound.ui.KeyboardHandler.given
-import com.tark.ports.outbound.backend.{BackendProvider, LlmClient}
+import com.tark.ports.outbound.backend.{BackendProvider, LlmClient, StreamingLlmClient}
 import com.tark.ports.outbound.context.SessionProvider
-import com.tark.ports.outbound.ui.Frontend
-import com.tark.ports.shared.ui.ChatState
-import org.jline.terminal.TerminalBuilder
 
 object TarkApp {
   def run: IO[Unit] =
@@ -31,22 +25,19 @@ object TarkApp {
     val appResource = for {
       client <- summon[BackendProvider[IO]].getClient
       session <- summon[SessionProvider[IO]].createSession
-      terminal <- Resource.make(
-        IO.blocking {
-          val t = TerminalBuilder.builder()
-            .system(true)
-            .build()
-          t.enterRawMode()
-          t
-        }
-      )(t => IO.blocking(t.close()))
-    } yield (client, session, terminal)
+      completionRef <- Resource.eval(Ref.of[IO, List[String]](DefaultAgentBackend.DefaultCompletions))
+      terminalAndReader <- JLineFrontend.terminalAndReader(completionRef)
+    } yield (client, session, completionRef, terminalAndReader)
 
-    appResource.use { case (llmClient, session, terminal) =>
+    appResource.use { case (llmClient, session, completionRef, (terminal, lineReader)) =>
       given LlmClient[IO] = llmClient
+      given StreamingLlmClient[IO] = llmClient.streaming.getOrElse(StreamingLlmClient.fromBuffered(llmClient))
 
-      val frontend: Frontend[IO] = JLineFrontend(terminal)
-      frontend.loop(ChatState(Vector.empty, ""), session)
+      for {
+        backend <- DefaultAgentBackend.create[IO](session)
+        _ <- backend.registerCompletions(words => completionRef.set(words))
+        _ <- JLineFrontend.resource(terminal, lineReader, backend).use(_.loop)
+      } yield ()
     }
   }
 }

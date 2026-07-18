@@ -6,11 +6,13 @@ Tark is organized around a strict Hexagonal Architecture: domain values and appl
 
 | Package | Role |
 | --- | --- |
-| `com.tark.domain` | Core domain values, OpenAI-compatible tool protocol values, memory values, and UI value objects. |
-| `com.tark.application` | Provider-neutral use cases, chat orchestration, transition helpers, and serialization/context instances. |
+| `com.tark.domain` | Core domain values, OpenAI-compatible tool protocol values, and memory values. |
+| `com.tark.ui` | Portable frontend language: terminal typeclasses, spinner contracts, neutral styles, and stream/action ADTs. |
+| `com.tark.application` | Provider-neutral use cases, backend orchestration, prompt/tool execution, and serialization/context instances. |
+| `com.tark.ports` | Boundary contracts, including the frontend-facing `AgentBackend` port and outbound infrastructure ports. |
 | `com.tark.ports.inbound` | Driving ports invoked by the CLI or other entrypoints, such as chat input, slash command dispatch, and keyboard handling. |
 | `com.tark.ports.outbound` | Driven ports implemented by infrastructure, such as LLM clients, command execution, session persistence, and memory summarization. |
-| `com.tark.adapters` | Concrete technology implementations for Ollama/STTP, Docker/local process execution, JLine terminal UI, command tools, and filesystem/session persistence. |
+| `com.tark.adapters` | Concrete technology implementations for Ollama/STTP, Docker/local process execution, JLine terminal reader/writer/spinner UI, command tools, and filesystem/session persistence. |
 | `com.tark.bootstrap` | Runtime configuration loading and composition root wiring for the CLI application. |
 
 ## Architecture Glossary
@@ -30,13 +32,15 @@ The dependency direction must always point inward:
 bootstrap -> adapters -> ports -> application -> domain
 bootstrap -> application
 application -> ports
+ports/application/adapters/bootstrap -> ui
 ```
 
 1. `com.tark.domain` must not import `com.tark.ports`, `com.tark.adapters`, `com.tark.application`, or `com.tark.bootstrap`.
-2. `com.tark.application` may import domain values and port interfaces, but it must not import concrete adapters such as Ollama, Docker, JLine, STTP, or `scala.sys.process`.
-3. `com.tark.ports` may import domain/value types and shared typeclass shapes, but it must not instantiate adapters or read runtime configuration.
-4. `com.tark.adapters` may import ports and domain values to implement concrete behavior. Adapters should not become the owner of provider-neutral use-case orchestration.
-5. `com.tark.bootstrap` is allowed to know about every layer because it is the composition root. Runtime configuration, default givens, and concrete client selection belong here or in adapter-owned factories called from here.
+2. `com.tark.ui` may define portable terminal/frontend vocabulary, but it must not import application, adapter, or bootstrap packages.
+3. `com.tark.application` may import domain values, port interfaces, and `com.tark.ui` action values, but it must not import concrete adapters such as Ollama, Docker, JLine, STTP, or `scala.sys.process`.
+4. `com.tark.ports` may import domain/value types and `com.tark.ui` shared frontend language, but it must not instantiate adapters or read runtime configuration.
+5. `com.tark.adapters` may import ports, UI language, and domain values to implement concrete behavior. Adapters should not become the owner of provider-neutral use-case orchestration.
+6. `com.tark.bootstrap` is allowed to know about every layer because it is the composition root. Runtime configuration, default givens, and concrete client selection belong here or in adapter-owned factories called from here.
 
 ## Package Shape
 
@@ -47,26 +51,24 @@ src/main/scala/com/tark/
     memory/
     react/
     tool/
-    ui/
+  ui/
   application/
+    backend/
     chat/
     instances/
     memory/
   ports/
+    AgentBackend.scala
     inbound/
-      chat/
       command/
-      ui/
     outbound/
       backend/
       context/
       memory/
       tool/
-      ui/
     shared/
       config/
       serialization/
-      ui/
   adapters/
     inbound/
       terminal/jline/
@@ -75,7 +77,6 @@ src/main/scala/com/tark/
     sandbox/docker/
     sandbox/local/
     tool/command/
-    ui/
   bootstrap/
 ```
 

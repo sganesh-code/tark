@@ -4,12 +4,12 @@ import cats.effect.{IO, Resource, Sync}
 import com.tark.adapters.backend.ollama.{OllamaEpisodicMemorySummarizer, OllamaLlmClient}
 import com.tark.ports.outbound.backend.{BackendProvider, LlmClient}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
-import sttp.client3.httpclient.cats.HttpClientCatsBackend
+import sttp.client3.asynchttpclient.fs2.AsyncHttpClientFs2Backend
 
 object OllamaRuntime {
   given backendProvider(using runtimeConfig: RuntimeConfig): BackendProvider[IO] with {
     override def getClient: Resource[IO, LlmClient[IO]] = {
-      HttpClientCatsBackend.resource[IO]().map { sttpBackend =>
+      AsyncHttpClientFs2Backend.resource[IO]().map { sttpBackend =>
         val config = runtimeConfig.config
         new OllamaLlmClient(sttpBackend, config.modelId, config.baseUrl)
       }

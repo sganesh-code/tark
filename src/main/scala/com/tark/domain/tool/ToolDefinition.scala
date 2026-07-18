@@ -33,7 +33,8 @@ case class ToolDefinition(
 case class OpenAIRequest(
   model: String,
   messages: List[OpenAIMessage],
-  tools: List[ToolDefinition]
+  tools: List[ToolDefinition],
+  stream: Option[Boolean] = None
 )
 
 case class OpenAIUsage(
@@ -98,7 +99,14 @@ object ToolDefinition {
 }
 
 object OpenAIRequest {
-  given Encoder[OpenAIRequest] = deriveEncoder
+  given Encoder[OpenAIRequest] = Encoder.instance { request =>
+    val base = JsonObject(
+      "model" -> request.model.asJson,
+      "messages" -> request.messages.asJson,
+      "tools" -> request.tools.asJson
+    )
+    Json.fromJsonObject(request.stream.fold(base)(stream => base.add("stream", stream.asJson)))
+  }
   given Decoder[OpenAIRequest] = deriveDecoder
 }
 
