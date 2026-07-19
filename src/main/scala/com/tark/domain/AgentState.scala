@@ -27,6 +27,15 @@ case class AgentState(
 
   // Copy-based helper methods for easy and chainable state updates
 
+  def withGoalContract(contract: GoalContract): AgentState =
+    copy(
+      goal = contract.goal,
+      deliverable = contract.deliverable,
+      constraints = contract.constraints,
+      assumptions = contract.assumptions,
+      knownFacts = contract.knownFacts
+    )
+
   def withGoal(g: String): AgentState =
     copy(goal = g)
 

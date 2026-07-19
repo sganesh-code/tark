@@ -1,45 +1,88 @@
-# Implementation Plan: TUI Tool Call Sub-Panel
+# Implementation Plan: Goal Contract Intake & Task Planning
+**Target Repository:** tark
+**Reference Design:** `@docs/agent_harness_research_grounding.md`
 
-- [x] **🎟️ TARK-PANEL: Interactive Tool Call Sub-Panel**
-  - **Description:** Implement a temporary, configurable sub-panel displaying tool call execution details and outputs. The sub-panel will reside in JLine's dynamic status bar area, wrapping text to a fixed width and styled with configurable borders. It will disappear completely upon tool call execution completion to leave terminal scrollback perfectly clean for assistant responses.
+This implementation plan breaks down the development of **Option A: Goal Contract Parser & Structured Intake Phase** and **Option B: Task Planner & Progress Tracker** as a quick follow-up. By executing these tickets, the agent harness will transition from a simple chat loop to a controlled, state-driven execution system grounded by clear contracts and step-by-step progress tracking.
+
+---
+
+- [x] **🎟️ [TARK-INTAKE-001]: Port & Prompt Definitions for Goal Contract Parser**
+  - **Description:** Define the outbound port `GoalContractParser` and its prompt/parsing system `GoalContractPrompt` to extract structured goals, deliverables, constraints, assumptions, and known facts from the user's initial input.
   - **Scope:**
     - **In scope:**
-      - Model and configuration structures (`com.tark.domain.Config`, `com.tark.bootstrap.RuntimeConfig`).
-      - UI sub-panel definitions, state, and `PanelRenderer` typeclass (`com.tark.ui.Spinner`, `com.tark.ui.AgentUi`).
-      - Tool call semantic actions (`com.tark.ui.AgentAction`).
-      - Backend ReAct execution loop wrapping (`com.tark.application.backend.ReActLoopEngine`).
-      - JLine status rendering and event handling (`com.tark.adapters.inbound.terminal.jline.JLineFrontend`).
+      - A new domain representation `GoalContract` or leveraging the existing `AgentState` fields directly.
+      - Outbound port `GoalContractParser[F[_]]` with `def parseGoal(input: String): F[GoalContract]`.
+      - System instruction and parsing utility `GoalContractPrompt` using Circe for structured JSON parsing and falling back to a line-by-line parser on format errors (modeled after `@src/main/scala/com/tark/ports/outbound/memory/MemoryPrompt.scala`).
     - **Out of scope:**
-      - Modifying slash command execution outputs (`/run`).
-      - Introducing global state or external styling libraries.
+      - Writing concrete Ollama client calls (deferred to `TARK-INTAKE-002`).
+      - Integrating into the main backend input flow (deferred to `TARK-INTAKE-003`).
   - **Implementation Tasks:**
-    - [x] **Investigate:** Review existing terminal layouts and spinner structures in `@src/main/scala/com/tark/ui/Spinner.scala` and `@src/main/scala/com/tark/adapters/inbound/terminal/jline/JLineFrontend.scala`.
-      - *Investigated JLineTerminalStatus integration with org.jline.terminal.Status. Confirmed that multi-line status bar update via Java List of AttributedString is fully supported and is clean, flicker-free, and transient.*
-    - [x] **Implement Config Extensibility:**
-      - Add `panelWidth: Int = 80` and `panelBorder: String = "rounded"` fields to `Config` in `@src/main/scala/com/tark/domain/Config.scala`.
-      - Read env overrides `TARK_PANEL_WIDTH` and `TARK_PANEL_BORDER` in `RuntimeConfig` inside `@src/main/scala/com/tark/bootstrap/RuntimeConfig.scala`.
-      - *Extended Config case class with panelWidth and panelBorder fields, including defaults. Updated RuntimeConfig to parse environment variables TARK_PANEL_WIDTH and TARK_PANEL_BORDER with fallback handling. Verified compilation.*
-    - [x] **Implement Pure Panel Models & Renderer:**
-      - Define `BorderStyle`, `BorderChars`, `PanelConfig`, and `PanelState` in `@src/main/scala/com/tark/ui/Spinner.scala` (or a dedicated panel file).
-      - Implement a typeclass `PanelRenderer[A]` and its given instance `PanelRenderer[PanelState]` to handle professional word-wrapping and border drawing.
-      - *Created SubPanel.scala containing BorderStyle, BorderChars, PanelConfig, PanelState, and PanelRenderer typeclass. Implemented a robust word-wrapping and padding algorithm with configurable borders. Fully verified with sbt compilation.*
-    - [x] **Expand TerminalStatus Typeclass:**
-      - Add `updatePanel(lines: Vector[String])` and `clearPanel()` to `TerminalStatus[F]` in `@src/main/scala/com/tark/ui/Spinner.scala` with clean Cats `Applicative` default no-op implementations.
-      - *Added updatePanel and clearPanel to TerminalStatus[F] with safe, backward-compatible default implementations using cats.Applicative. Verified compilation.*
-    - [x] **Define Semantic Agent Actions:**
-      - Add `ToolCallStart`, `ToolCallOutput`, and `ToolCallEnd` case classes to `AgentAction[F]` in `@src/main/scala/com/tark/ui/AgentUi.scala`.
-      - *Added ToolCallStart[F], ToolCallOutput[F], and ToolCallEnd[F] case classes to AgentAction[F]. Confirmed that the compiler successfully emitted exhaustivity warnings, validating our structural changes.*
-    - [x] **Integrate ReAct Loop Engine:**
-      - Wrap tool calls in `@src/main/scala/com/tark/application/backend/ReActLoopEngine.scala` with `ToolCallStart`, `ToolCallOutput`, and `ToolCallEnd` stream emissions.
-      - *Integrated semantic actions ToolCallStart, ToolCallOutput, and ToolCallEnd around tool execution in ReActLoopEngine. Cleared legacy Log and SystemMessage outputs, which are now correctly routed via semantic events. Verified compilation.*
-    - [x] **Implement JLine Rendering:**
-      - Update `JLineTerminalStatus` inside `@src/main/scala/com/tark/adapters/inbound/terminal/jline/JLineFrontend.scala` to merge and render both active spinner and active panel lines atomically into `Status`.
-      - Handle new `AgentAction` cases inside `JLineFrontend.executeActions` by keeping local state in a `Ref[IO, Option[PanelState]]` and refreshing the panel display. Ensure a `.guarantee` cleanly teardowns the panel.
-      - *Refactored JLineTerminalStatus to manage both the single-line spinner and multi-line panel rendering in Status atomically. Implemented dynamic subpanel management in JLineFrontend using a local Ref[IO, Option[PanelState]] and registered standard ToolCall start, output, and end events with guaranteed teardown. Compiles cleanly.*
-    - [x] **Test:**
-      - Add unit tests for `PanelRenderer` word wrapping and border styling in `@src/test/scala/com/tark/ui/AgentUiSpec.scala`.
-      - Add unit tests for `JLineTerminalStatus` multi-line status merging and `JLineFrontend` tool action handling in `@src/test/scala/com/tark/adapters/inbound/terminal/jline/JLineFrontendSpec.scala`.
-      - Ensure all existing and new tests compile and pass via `sbt "testOnly *"` and compile cleanly.
-      - *Added comprehensive unit tests to AgentUiSpec covering PanelRenderer word-wrapping, padding, and borders across different styles. Added integration tests to JLineFrontendSpec verifying JLineTerminalStatus multi-line rendering and JLineFrontend semantic action processing. All 75 tests passed successfully.*
-    - [x] **Verify:** Run the application locally (or run full tests) to ensure that the hexagonal architecture dependencies are checked and verified without layer-violation errors via `sbt "testOnly com.tark.architecture.HexagonalBoundarySpec"`.
-      - *Ran the HexagonalBoundarySpec static verification suite. Confirmed 100% boundary integrity with zero layer-bypass violations across the domain, ports, adapters, application, and UI packages.*
+    - [x] Create the case class `GoalContract` (fields: `goal: String`, `deliverable: String`, `constraints: List[String]`, `assumptions: List[String]`, `knownFacts: List[String]`) in `src/main/scala/com/tark/ports/outbound/backend/GoalContractParser.scala` or directly in `@src/main/scala/com/tark/domain/AgentState.scala`.
+      - *Created `GoalContract.scala` domain class in `com.tark.domain` package with automatic JSON codecs. Added `withGoalContract` helper to `AgentState`.*
+    - [x] Define the interface trait `GoalContractParser` in `src/main/scala/com/tark/ports/outbound/backend/GoalContractParser.scala`.
+      - *Defined outbound port interface `GoalContractParser` representing the goal contract extraction.*
+    - [x] Create `src/main/scala/com/tark/ports/outbound/backend/GoalContractPrompt.scala` defining the LLM system instructions to produce a strict JSON output matching the `GoalContract` schema.
+      - *Created `GoalContractPrompt.scala` defining instructions, template user prompts, and structured JSON targets.*
+    - [x] Implement `GoalContractPrompt.parseGoalResponse(content: String): GoalContract` with JSON parsing via Circe and a robust fallback line-by-line parser.
+      - *Implemented pure `Deserializable[String, GoalContract]` typeclass instance under `GoalContractPrompt` supporting Circe and fallback parsing.*
+    - [x] Add unit tests in `src/test/scala/com/tark/ports/outbound/backend/GoalContractPromptSpec.scala` testing JSON parsing success and fallback resilience.
+      - *Created and verified `GoalContractPromptSpec.scala` containing exhaustive test scenarios.*
+
+- [ ] **🎟️ [TARK-INTAKE-002]: Concrete Ollama Adapter for Goal Contract Parser**
+  - **Description:** Create the concrete adapter `OllamaGoalContractParser` that uses the standard LLM client to request and parse the goal contract from Ollama.
+  - **Scope:**
+    - **In scope:**
+      - Concrete class `OllamaGoalContractParser[F[_]: Sync]` implementing `GoalContractParser[F]`.
+      - Chat prompting using `LlmClient` and parsing the text output via `GoalContractPrompt`.
+    - **Out of scope:**
+      - Integrating into `DefaultAgentBackend`.
+  - **Implementation Tasks:**
+    - [ ] Implement the adapter `OllamaGoalContractParser` in `src/main/scala/com/tark/adapters/backend/ollama/OllamaGoalContractParser.scala` injecting `@src/main/scala/com/tark/ports/outbound/backend/LlmClient.scala`.
+    - [ ] Add an integration spec `src/test/scala/com/tark/adapters/backend/ollama/OllamaGoalContractParserSpec.scala` using a Fake `LlmClient` to assert that correct messages are formulated and responses are correctly routed and parsed.
+
+- [ ] **🎟️ [TARK-INTAKE-003]: Integrate Goal Intake Phase into DefaultAgentBackend**
+  - **Description:** Wire the Goal Contract Parser into the backend input handler. On the first user message of a session, run the parser to extract the `GoalContract`, update the `AgentState` in the context's working memory, and print a system message outlining the contract before launching the ReAct loop.
+  - **Scope:**
+    - **In scope:**
+      - Modifying `DefaultAgentBackend` to check if `session.context.memory.working` already has an active goal.
+      - If no goal is present, execute the `GoalContractParser` on the user input, enrich the working `AgentState`, notify the user with a formatted terminal message, and run the ReAct engine with the enriched context.
+      - Updating bootstrap wiring and tests.
+    - **Out of scope:**
+      - Generating a step-by-step sequential plan list (deferred to `TARK-PLAN-001`).
+  - **Implementation Tasks:**
+    - [ ] Add `GoalContractParser[F]` dependency to `@src/main/scala/com/tark/application/backend/DefaultAgentBackend.scala`.
+    - [ ] Modify `DefaultAgentBackend.processPrompt` to check if the session's active `AgentState` contains a goal. If it is empty, call the parser first.
+    - [ ] Populate the `AgentState` with the parsed contract's goal, deliverable, constraints, assumptions, and known facts using the helpers in `@src/main/scala/com/tark/domain/AgentState.scala`.
+    - [ ] Emit a clean system message action in the backend task stream to inform the user (e.g., `[Intake] Active Goal: <goal>`, `[Intake] Constraints: <constraints>`).
+    - [ ] Update wiring in `@src/main/scala/com/tark/bootstrap/TarkApp.scala` and `OllamaRuntime.scala` to construct and supply the `OllamaGoalContractParser`.
+    - [ ] Update `@src/test/scala/com/tark/application/backend/DefaultAgentBackendSpec.scala` to mock/fake the parser and verify that a new session successfully extracts and stores the goal contract in context before running the conversation.
+
+- [ ] **🎟️ [TARK-PLAN-001]: Port & Prompt Definitions for Task Planner**
+  - **Description:** Define the `TaskPlanner` outbound port and prompt system to decompose the active goal/deliverables from the `AgentState` into a sequential sequence of execution steps.
+  - **Scope:**
+    - **In scope:**
+      - Interface `TaskPlanner[F[_]]` with `def generatePlan(goal: String, deliverable: String, constraints: List[String]): F[List[String]]`.
+      - System instruction and parsing utility `TaskPlannerPrompt` instructing the LLM to output a JSON list of strings (or fallback newline/bullet splitter).
+    - **Out of scope:**
+      - Integrating into the backend execution flow.
+  - **Implementation Tasks:**
+    - [ ] Define the interface trait `TaskPlanner` in `src/main/scala/com/tark/ports/outbound/backend/TaskPlanner.scala`.
+    - [ ] Create `src/main/scala/com/tark/ports/outbound/backend/TaskPlannerPrompt.scala` specifying LLM instructions to generate a sequential JSON array of steps based on goals and constraints.
+    - [ ] Add unit tests in `src/test/scala/com/tark/ports/outbound/backend/TaskPlannerPromptSpec.scala` to verify plan extraction on JSON and line-delimited outputs.
+
+- [ ] **🎟️ [TARK-PLAN-002]: Ollama Adapter & Backend Integration for Task Planner**
+  - **Description:** Implement `OllamaTaskPlanner` and integrate it into the `DefaultAgentBackend` to generate a checklist plan immediately after goal contract extraction. Update the UI to render the progress checklist.
+  - **Scope:**
+    - **In scope:**
+      - Concrete class `OllamaTaskPlanner[F[_]: Sync]` in `src/main/scala/com/tark/adapters/backend/ollama/OllamaTaskPlanner.scala`.
+      - Updating the intake phase in `DefaultAgentBackend` to run the planner immediately after extracting the goal contract, updating `AgentState.plan` and `currentStep` to 0.
+      - Displaying the initial plan steps in the console.
+    - **Out of scope:**
+      - Complete state machine transition refactoring (e.g. `CLARIFY` or `VERIFY` states).
+  - **Implementation Tasks:**
+    - [ ] Create `src/main/scala/com/tark/adapters/backend/ollama/OllamaTaskPlanner.scala` utilizing `LlmClient[F]` and `TaskPlannerPrompt`.
+    - [ ] Add `TaskPlanner[F]` as a dependency in `@src/main/scala/com/tark/application/backend/DefaultAgentBackend.scala`.
+    - [ ] Update `DefaultAgentBackend.processPrompt` to run `planner.generatePlan` immediately after goal extraction, saving the resulting step list into `AgentState` via `withPlan`.
+    - [ ] Update `@src/main/scala/com/tark/bootstrap/TarkApp.scala` and `OllamaRuntime.scala` to instantiate and inject `OllamaTaskPlanner`.
+    - [ ] Assert in `@src/test/scala/com/tark/application/backend/DefaultAgentBackendSpec.scala` that plans are generated, saved, and successfully injected into downstream prompt system instructions automatically by `@src/main/scala/com/tark/ports/outbound/backend/ContextProvider.scala`.
+    - [ ] Run the complete testing and static hexagonal boundary validation suite (`sbt test`) to verify 100% compliance.
