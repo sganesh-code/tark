@@ -9,7 +9,7 @@ import com.tark.domain.context.{Context, Session}
 import com.tark.domain.memory
 import com.tark.domain.memory.Memory
 import com.tark.ports.shared.serialization.Sink
-import com.tark.ports.outbound.context.SessionProvider
+import com.tark.ports.outbound.context.{SessionProvider, SessionRepository}
 
 import java.nio.file.Path
 
@@ -23,7 +23,8 @@ object SessionProviderSettings {
 object DefaultSessionProvider {
   given default(using
     settings: SessionProviderSettings,
-    sink: Sink[IO, Context, Path]
+    sink: Sink[IO, Context, Path],
+    sessionRepository: SessionRepository[IO]
   ): SessionProvider[IO] with {
     override def createSession: Resource[IO, Session] = {
       val acquire: IO[Session] = for {
@@ -39,60 +40,12 @@ object DefaultSessionProvider {
           hostPath = Path.of(".")
         )
         
-        imageExists <- IO.blocking {
-          try {
-            scala.sys.process.Process(Seq("docker", "image", "inspect", config.sandboxImageName)).! == 0
-          } catch {
-            case _: Exception => false
-          }
-        }
+        _ <- DockerSandboxLifecycle.ensureImageExists(config.sandboxImageName, settings.forceBuild)
         
-        _ <- if (!imageExists || settings.forceBuild) {
-          IO(println(s"Building Docker sandbox image ${config.sandboxImageName}...")) *>
-          IO.blocking {
-            try {
-              scala.sys.process.Process(Seq("docker", "build", "-t", config.sandboxImageName, ".")).!!
-            } catch {
-              case e: Exception => println(s"Warning: Docker build skipped/failed: ${e.getMessage}")
-            }
-          }
-        } else {
-          IO(println(s"Docker sandbox image ${config.sandboxImageName} already exists. Skipping build."))
-        }
-        
-        _ <- IO(println("Starting Docker sandbox container..."))
+        _ <- IO.println("Starting Docker sandbox container...")
         _ <- DockerSandboxLifecycle.start(sandbox)
         
-        existingMemory <- IO.blocking {
-          import java.nio.file.Files
-          val sessionsDir = Path.of("target/sessions")
-          if (Files.exists(sessionsDir) && Files.isDirectory(sessionsDir)) {
-            val files = Files.list(sessionsDir).toArray.map(_.asInstanceOf[Path])
-              .filter(p => p.toString.endsWith(".md") && p.getFileName.toString.startsWith("session_"))
-            if (files.nonEmpty) {
-              val latestFile = files.maxBy(p => Files.getLastModifiedTime(p).toMillis)
-              val content = Files.readString(latestFile)
-              
-              val jsonRegex = """(?s).*?<!-- MEMORY_JSON\n(.*?)\n-->.*?""".r
-              content match {
-                case jsonRegex(jsonStr) =>
-                  import io.circe.parser.*
-                  decode[Memory](jsonStr) match {
-                    case Right(mem) =>
-                      mem
-                    case Left(_) =>
-                      memory.Memory()
-                  }
-                case _ =>
-                  memory.Memory()
-              }
-            } else {
-              memory.Memory()
-            }
-          } else {
-            memory.Memory()
-          }
-        }
+        existingMemory <- sessionRepository.loadLatestMemory(Path.of("target/sessions"))
         
         context = Context(List(CommandTool.definition), existingMemory, List.empty, Some(sandbox))
         session = Session(sessionId, context, sessionPath)
@@ -104,7 +57,7 @@ object DefaultSessionProvider {
         session.context.sandbox match {
           case Some(sandbox: DockerSandbox) =>
             for {
-              _ <- IO(println("\nStopping and cleaning up Docker sandbox container..."))
+              _ <- IO.println("\nStopping and cleaning up Docker sandbox container...")
               _ <- DockerSandboxLifecycle.stop(sandbox)
             } yield ()
           case _ => IO.unit

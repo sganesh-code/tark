@@ -5,25 +5,28 @@ import cats.effect.IO
 import scala.sys.process.*
 
 object DockerSandboxLifecycle {
-  def ensureImageExists(imageName: String, forceBuild: Boolean): IO[Unit] = IO.blocking {
-    val imageExists = try {
-      Process(Seq("docker", "image", "inspect", imageName)).! == 0
-    } catch {
-      case _: Exception => false
+  def ensureImageExists(imageName: String, forceBuild: Boolean): IO[Unit] = {
+    val checkImage: IO[Boolean] = IO.blocking {
+      try {
+        Process(Seq("docker", "image", "inspect", imageName)).! == 0
+      } catch {
+        case _: Exception => false
+      }
     }
 
-    if (!imageExists || forceBuild) {
-      println(s"Building Docker sandbox image $imageName...")
-      try {
-        Process(Seq("docker", "build", "-t", imageName, ".")).!!
-        ()
-      } catch {
-        case e: Exception => println(s"Warning: Docker build skipped/failed: ${e.getMessage}")
+    checkImage.flatMap { imageExists =>
+      if (!imageExists || forceBuild) {
+        IO.println(s"Building Docker sandbox image $imageName...") >>
+          IO.blocking {
+            Process(Seq("docker", "build", "-t", imageName, ".")).!!
+          }.void.handleErrorWith { e =>
+            IO.println(s"Warning: Docker build skipped/failed: ${e.getMessage}")
+          }
+      } else {
+        IO.println(s"Docker sandbox image $imageName already exists. Skipping build.")
       }
-    } else {
-      println(s"Docker sandbox image $imageName already exists. Skipping build.")
     }
-  }.void
+  }
 
   def start(sandbox: DockerSandbox): IO[Unit] = IO.blocking {
     try {
