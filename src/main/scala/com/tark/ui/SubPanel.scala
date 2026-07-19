@@ -34,7 +34,7 @@ object BorderChars:
 
 final case class PanelConfig(
   width: Int,
-  borderStyle: BorderStyle = BorderStyle.Rounded,
+  borderStyle: BorderStyle = BorderStyle.Single,
   maxLines: Int = 10
 )
 
@@ -93,7 +93,7 @@ object PanelRenderer:
               if currentLine.isEmpty then
                 if wordLen > width then
                   val chunks = word.grouped(width).toVector
-                  ((acc ++ chunks.init): Vector[String], chunks.last)
+                  (acc ++ chunks.init: Vector[String], chunks.last)
                 else (acc, word)
               else
                 val potential = s"$currentLine $word"
@@ -101,7 +101,7 @@ object PanelRenderer:
                 if potentialLen > width then
                   if wordLen > width then
                     val chunks = word.grouped(width).toVector
-                    (((acc :+ currentLine) ++ chunks.init): Vector[String], chunks.last)
+                    ((acc :+ currentLine) ++ chunks.init: Vector[String], chunks.last)
                   else (acc :+ currentLine, word)
                 else (acc, potential)
             }

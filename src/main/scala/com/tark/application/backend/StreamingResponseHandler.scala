@@ -2,6 +2,7 @@ package com.tark.application.backend
 
 import cats.effect.{Ref, Sync}
 import cats.syntax.all.*
+import com.tark.domain.Config
 import com.tark.domain.tool.{OpenAIUsage, ToolCall}
 import com.tark.ports.outbound.backend.*
 import com.tark.ui.AgentAction
@@ -10,7 +11,8 @@ import fs2.Stream
 final class StreamingResponseHandler[F[_]: Sync](
   streamingLlmClient: StreamingLlmClient[F],
   llmClient: LlmClient[F],
-  usageRef: Ref[F, OpenAIUsage]
+  usageRef: Ref[F, OpenAIUsage],
+  config: Config
 ) {
   import StreamingResponseHandler.*
 
@@ -27,7 +29,10 @@ final class StreamingResponseHandler[F[_]: Sync](
         curr.completion_tokens + usage.completion_tokens,
         curr.total_tokens + usage.total_tokens
       )
-    ).map(u => s"LLM Usage: Prompt ${u.prompt_tokens} | Completion ${u.completion_tokens} | Total ${u.total_tokens}")
+    ).map { u =>
+      val pct = if (config.contextWindowSize > 0) f"${(usage.prompt_tokens.toDouble / config.contextWindowSize * 100)}%.1f%%" else "0.0%"
+      s"Context Window: ${usage.prompt_tokens}/${config.contextWindowSize} tokens ($pct) | Total Usage: Prompt ${u.prompt_tokens} | Completion ${u.completion_tokens} | Total ${u.total_tokens}"
+    }
 
   def collectStreamingResponse(
     prompt: Prompt,

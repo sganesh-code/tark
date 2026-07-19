@@ -3,6 +3,7 @@ package com.tark.application.backend
 import cats.effect.{Ref, Sync}
 import cats.syntax.all.*
 import com.tark.application.time.Clock
+import com.tark.domain.Config
 import com.tark.domain.Interaction
 import com.tark.domain.context.Context
 import com.tark.domain.tool.{OpenAIMessage, ToolCall, ToolResult}
@@ -20,7 +21,9 @@ final case class ConversationResult(
 final class ReActLoopEngine[F[_]: Sync](
   streamingHandler: StreamingResponseHandler[F],
   toolCallExecutor: ToolCallExecutor[F],
-  clock: Clock[F]
+  clock: Clock[F],
+  contextDistiller: ContextDistiller[F],
+  config: Config
 ) {
   import ReActLoopEngine.*
 
@@ -79,16 +82,24 @@ final class ReActLoopEngine[F[_]: Sync](
                       AgentTask(
                         description = None,
                         action =
-                          Stream.emit(AgentAction.ToolCallStart(toolCall.function.name, toolCall.function.arguments)) ++
+                          Stream.emit(AgentAction.ToolCallStart[F](toolCall.function.name, toolCall.function.arguments)) ++
                             toolActionStream ++
                             Stream.eval(resultRef.get).flatMap {
+                              case Some(result) if config.enableDistillation && result.content.length > config.distillationThreshold =>
+                                Stream.emit(AgentAction.SystemMessage[F](s"[Context Distillation] Distilling tool output (${result.content.length} chars) based on active goal...")) ++
+                                  Stream.eval(contextDistiller.distill(context, toolCall, result.content)).flatMap { distilled =>
+                                    val distilledResult = result.copy(content = distilled)
+                                    Stream.eval(toolResultRef.update(_ :+ (toolCall, distilledResult))).drain ++
+                                      Stream.emit(AgentAction.SystemMessage[F](s"[Context Distillation] Completed. Distilled size: ${distilled.length} chars.")) ++
+                                      Stream.emit(AgentAction.ToolCallOutput[F](distilled))
+                                  }
                               case Some(result) =>
                                 Stream.eval(toolResultRef.update(_ :+ (toolCall, result))).drain ++
-                                  Stream.emit(AgentAction.ToolCallOutput(result.content))
+                                  Stream.emit(AgentAction.ToolCallOutput[F](result.content))
                               case None =>
                                 Stream.empty
                             } ++
-                            Stream.emit(AgentAction.ToolCallEnd())
+                            Stream.emit(AgentAction.ToolCallEnd[F]())
                       )
                     }
                   }

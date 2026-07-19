@@ -3,13 +3,13 @@ package com.tark.application.backend
 import cats.effect.{Ref, Sync}
 import cats.syntax.all.*
 import com.tark.application.time.Clock
-import com.tark.domain.{AgentState, Interaction}
 import com.tark.domain.context.{Context, Session}
-import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolResult}
+import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage}
+import com.tark.domain.{AgentState, Config}
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.*
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
-import com.tark.ports.outbound.tool.{CommandExecutor, DefaultToolCallExecutor, ToolCallExecutor}
+import com.tark.ports.outbound.tool.{CommandExecutor, DefaultToolCallExecutor}
 import com.tark.ports.shared.serialization.Sink
 import com.tark.ui.{AgentAction, AgentTask}
 import fs2.Stream
@@ -30,8 +30,6 @@ final class DefaultAgentBackend[F[_]: Sync] private (
   
   private val slashCommandBackend =
     SlashCommandBackend[F](actions => emitActions(actions*), sessionRef, commandExecutor, clock, updateCompletionsRef)
-
-  import DefaultAgentBackend.*
 
   override def registerCompletions(update: List[String] => F[Unit]): F[Unit] =
     slashCommandBackend.registerCompletions(update)
@@ -106,15 +104,17 @@ object DefaultAgentBackend {
     clock: Clock[F],
     commandExecutor: CommandExecutor[F],
     llmClient: LlmClient[F],
-    streamingLlmClient: StreamingLlmClient[F]
+    streamingLlmClient: StreamingLlmClient[F],
+    config: Config
   ): F[DefaultAgentBackend[F]] =
     for {
       sessionRef <- Ref.of[F, Session](session)
       updateRef <- Ref.of[F, List[String] => F[Unit]](_ => Sync[F].unit)
       usageRef <- Ref.of[F, OpenAIUsage](OpenAIUsage(0, 0, 0))
-      streamingHandler = StreamingResponseHandler[F](streamingLlmClient, llmClient, usageRef)
+      streamingHandler = StreamingResponseHandler[F](streamingLlmClient, llmClient, usageRef, config)
       toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
-      reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock)
+      contextDistiller = ContextDistiller[F](llmClient)
+      reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, contextDistiller, config)
     } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
@@ -122,7 +122,8 @@ object DefaultAgentBackend {
     summarizer: EpisodicMemorySummarizer[F],
     clock: Clock[F],
     commandExecutor: CommandExecutor[F],
-    llmClient: LlmClient[F]
+    llmClient: LlmClient[F],
+    config: Config
   ): F[DefaultAgentBackend[F]] = {
     given StreamingLlmClient[F] = StreamingLlmClient.fromBuffered(llmClient)
     create[F](session)

@@ -20,6 +20,8 @@ import java.nio.file.Path
 import scala.collection.mutable.ArrayBuffer
 
 class DefaultAgentBackendSpec extends FunSuite {
+  given com.tark.domain.Config = com.tark.domain.Config.default
+
   private val commandTool =
     ToolDefinition(
       `type` = "function",
@@ -70,7 +72,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     assertEquals(tasks, List(Some("Waiting for assistant response"), Some("Finalizing assistant response"), Some("Persisting session")))
     assert(actions.exists { case AgentAction.AssistantDelta("plain answer") => true; case _ => false })
     assert(actions.exists { case AgentAction.AssistantEnd() => true; case _ => false })
-    assert(actions.contains(AgentAction.StatusUpdate("LLM Usage: Prompt 10 | Completion 5 | Total 15")))
+    assert(actions.contains(AgentAction.StatusUpdate("Context Window: 10/32768 tokens (0.0%) | Total Usage: Prompt 10 | Completion 5 | Total 15")))
 
     val persisted = written.get
     val working = persisted.memory.working.get
@@ -538,8 +540,8 @@ class DefaultAgentBackendSpec extends FunSuite {
       results2 <- executeSequentially(backend, "second prompt")
     } yield (results1 ++ results2).flatMap(_._2)).unsafeRunSync()
 
-    assert(actions.contains(AgentAction.StatusUpdate("LLM Usage: Prompt 10 | Completion 5 | Total 15")))
-    assert(actions.contains(AgentAction.StatusUpdate("LLM Usage: Prompt 20 | Completion 10 | Total 30")))
+    assert(actions.contains(AgentAction.StatusUpdate("Context Window: 10/32768 tokens (0.0%) | Total Usage: Prompt 10 | Completion 5 | Total 15")))
+    assert(actions.contains(AgentAction.StatusUpdate("Context Window: 10/32768 tokens (0.0%) | Total Usage: Prompt 20 | Completion 10 | Total 30")))
   }
 
   private def executeSequentially(

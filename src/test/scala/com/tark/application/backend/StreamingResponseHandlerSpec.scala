@@ -26,7 +26,7 @@ class StreamingResponseHandlerSpec extends FunSuite {
         IO.raiseError(new AssertionError("should not be called"))
     }
 
-    val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef)
+    val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef, com.tark.domain.Config.default)
     val responseRef = Ref.unsafe[IO, Option[LLMResponse[ToolCall]]](None)
 
     val prompt = Prompt(List.empty, List.empty)
@@ -38,7 +38,7 @@ class StreamingResponseHandlerSpec extends FunSuite {
         AgentAction.AssistantDelta("Hello "),
         AgentAction.AssistantDelta("World!"),
         AgentAction.AssistantEnd(),
-        AgentAction.StatusUpdate("LLM Usage: Prompt 5 | Completion 5 | Total 10")
+        AgentAction.StatusUpdate("Context Window: 5/32768 tokens (0.0%) | Total Usage: Prompt 5 | Completion 5 | Total 10")
       )
     )
 

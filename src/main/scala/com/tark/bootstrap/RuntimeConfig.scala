@@ -18,7 +18,10 @@ object RuntimeConfig {
       baseUrl = env.getOrElse("TARK_OLLAMA_URL", Config.DefaultBaseUrl),
       sandboxImageName = env.getOrElse("TARK_SANDBOX_IMAGE", Config.DefaultSandboxImageName),
       panelWidth = env.get("TARK_PANEL_WIDTH").flatMap(_.toIntOption).getOrElse(80),
-      panelBorder = env.getOrElse("TARK_PANEL_BORDER", "rounded")
+      panelBorder = env.getOrElse("TARK_PANEL_BORDER", "rounded"),
+      contextWindowSize = env.get("TARK_CONTEXT_WINDOW_SIZE").flatMap(_.toIntOption).getOrElse(Config.DefaultContextWindowSize),
+      enableDistillation = env.get("TARK_ENABLE_DISTILLATION").flatMap(_.toBooleanOption).getOrElse(Config.DefaultEnableDistillation),
+      distillationThreshold = env.get("TARK_DISTILLATION_THRESHOLD").flatMap(_.toIntOption).getOrElse(Config.DefaultDistillationThreshold)
     )
 
     RuntimeConfig(

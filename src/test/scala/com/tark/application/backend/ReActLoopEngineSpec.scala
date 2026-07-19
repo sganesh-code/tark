@@ -8,6 +8,7 @@ import com.tark.domain.memory.Memory
 import com.tark.domain.tool.{OpenAIMessage, ToolCall, ToolCallFunction, ToolResult, OpenAIUsage}
 import com.tark.ports.outbound.backend.*
 import com.tark.ports.outbound.tool.{CommandExecutor, DefaultToolCallExecutor, ToolCallExecutor}
+import com.tark.ui.AgentAction
 import munit.FunSuite
 
 class ReActLoopEngineSpec extends FunSuite {
@@ -27,7 +28,8 @@ class ReActLoopEngineSpec extends FunSuite {
         IO.raiseError(new AssertionError("should not be called"))
     }
 
-    val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef)
+    val config = com.tark.domain.Config.default
+    val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef, config)
     
     val executor = new CommandExecutor[IO] {
       override def definition = null
@@ -39,7 +41,8 @@ class ReActLoopEngineSpec extends FunSuite {
     }
 
     val toolCallExecutor = new DefaultToolCallExecutor[IO](executor)
-    val engine = new ReActLoopEngine[IO](handler, toolCallExecutor, clock)
+    val distiller = new ContextDistiller[IO](llmClient)
+    val engine = new ReActLoopEngine[IO](handler, toolCallExecutor, clock, distiller, config)
     val context = Context(List.empty, Memory(), List.empty)
     val messages = List(OpenAIMessage(role = "user", content = Some("Tell me a story")))
     val resultRef = Ref.unsafe[IO, Option[ConversationResult]](None)
@@ -110,7 +113,8 @@ class ReActLoopEngineSpec extends FunSuite {
         IO.raiseError(new AssertionError("should not be called"))
     }
 
-    val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef)
+    val config = com.tark.domain.Config.default
+    val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef, config)
 
     val executor = new CommandExecutor[IO] {
       override def definition = null
@@ -122,7 +126,8 @@ class ReActLoopEngineSpec extends FunSuite {
     }
 
     val toolCallExecutor = new DefaultToolCallExecutor[IO](executor)
-    val engine = new ReActLoopEngine[IO](handler, toolCallExecutor, clock)
+    val distiller = new ContextDistiller[IO](llmClient)
+    val engine = new ReActLoopEngine[IO](handler, toolCallExecutor, clock, distiller, config)
     val context = Context(List.empty, Memory(), List.empty)
     val messages = List(OpenAIMessage(role = "user", content = Some("Interactive prompt")))
     val resultRef = Ref.unsafe[IO, Option[ConversationResult]](None)
@@ -165,5 +170,118 @@ class ReActLoopEngineSpec extends FunSuite {
     val firstInteraction = result.get.interactions.head
     assertEquals(firstInteraction.toolName, "questionnaire")
     assertEquals(firstInteraction.output, "Yes")
+  }
+
+  test("ReActLoopEngine triggers context distillation on tool output exceeding threshold") {
+    val usageRef = Ref.unsafe[IO, OpenAIUsage](OpenAIUsage(0, 0, 0))
+    val callCounter = Ref.unsafe[IO, Int](0)
+
+    val rawLongOutput = "A" * 1500 // 1500 characters, exceeds default 1000 threshold
+
+    val toolCall = ToolCall("call_cmd", "function", ToolCallFunction("command_executor", """{"command": "cat long.txt"}"""))
+
+    val streamingClient = new StreamingLlmClient[IO] {
+      override def chatStream(prompt: Prompt): fs2.Stream[IO, LlmStreamEvent] = {
+        fs2.Stream.eval(callCounter.getAndUpdate(_ + 1)).flatMap {
+          case 0 =>
+            // Initial call: triggers tool call
+            fs2.Stream(
+              LlmStreamEvent.ToolCallDelta(
+                index = 0,
+                id = Some("call_cmd"),
+                callType = Some("function"),
+                name = Some("command_executor"),
+                argumentsChunk = Some("""{"command": "cat long.txt"}""")
+              ),
+              LlmStreamEvent.Completed(
+                Some(
+                  LLMResponse(
+                    content = "",
+                    results = List(toolCall),
+                    usage = OpenAIUsage(10, 5, 15)
+                  )
+                )
+              )
+            )
+          case _ =>
+            // Third call: final assistant response (after distillation is done)
+            fs2.Stream(
+              LlmStreamEvent.ContentDelta("All done with distillation!"),
+              LlmStreamEvent.Completed(
+                Some(
+                  LLMResponse(
+                    content = "All done with distillation!",
+                    results = List.empty,
+                    usage = OpenAIUsage(20, 10, 30)
+                  )
+                )
+              )
+            )
+        }
+      }
+    }
+
+    val llmClient = new LlmClient[IO] {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] = {
+        // Second call: ContextDistiller performs a blocking chat call to distill the raw output
+        IO.pure(
+          LLMResponse(
+            content = "distilled output response",
+            results = List.empty,
+            usage = OpenAIUsage(5, 5, 10)
+          )
+        )
+      }
+    }
+
+    val config = com.tark.domain.Config.default.copy(distillationThreshold = 1000, enableDistillation = true)
+    val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef, config)
+
+    val executor = new CommandExecutor[IO] {
+      override def definition = null
+      override def execute(context: Context, toolCall: ToolCall) =
+        IO.pure(ToolResult(rawLongOutput))
+    }
+
+    val clock = new Clock[IO] {
+      override def realTimeMillis = IO.pure(12345L)
+    }
+
+    val toolCallExecutor = new DefaultToolCallExecutor[IO](executor)
+    val distiller = new ContextDistiller[IO](llmClient)
+    val engine = new ReActLoopEngine[IO](handler, toolCallExecutor, clock, distiller, config)
+    val context = Context(List.empty, Memory(), List.empty)
+    val messages = List(OpenAIMessage(role = "user", content = Some("Read long file")))
+    val resultRef = Ref.unsafe[IO, Option[ConversationResult]](None)
+
+    val actions = engine
+      .runConversation(context, messages, depth = 0, Vector.empty, resultRef)
+      .flatMap(_.action)
+      .compile
+      .toList
+      .unsafeRunSync()
+
+    // Verify context distillation system messages were emitted
+    val systemMessages = actions.collect { case AgentAction.SystemMessage(text) => text }
+    assert(systemMessages.exists(_.contains("Distilling tool output (1500 chars)")))
+    assert(systemMessages.exists(_.contains("Completed. Distilled size: 25 chars.")))
+
+    // Verify tool output in the action stream was distilled
+    val toolOutputs = actions.collect { case AgentAction.ToolCallOutput(text) => text }
+    assertEquals(toolOutputs, List("distilled output response"))
+
+    val result = resultRef.get.unsafeRunSync()
+    assert(result.isDefined)
+    
+    // Check that distilled result was passed to subsequent messages
+    val toolMessage = result.get.messages.find(_.role == "tool")
+    assert(toolMessage.isDefined)
+    assertEquals(toolMessage.get.content, Some("distilled output response"))
+
+    // Check that interaction output was distilled
+    assertEquals(result.get.interactions.size, 2)
+    val firstInteraction = result.get.interactions.head
+    assertEquals(firstInteraction.toolName, "command_executor")
+    assertEquals(firstInteraction.output, "distilled output response")
   }
 }
