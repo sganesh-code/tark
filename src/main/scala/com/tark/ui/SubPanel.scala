@@ -43,6 +43,9 @@ final case class PanelState(
   contentLines: Vector[String] = Vector.empty
 )
 
+private[ui] def stripAnsi(s: String): String =
+  s.replaceAll("\\u001b\\[[;\\d]*[ -/]*[@-~]", "")
+
 trait PanelRenderer[A]:
   def render(state: A): Vector[String]
 
@@ -59,13 +62,20 @@ object PanelRenderer:
 
       borderOpt match
         case scala.None =>
-          truncatedLines.map(_.padTo(config.width, ' '))
+          truncatedLines.map { line =>
+            val visibleLen = stripAnsi(line).length
+            val padAmount = Math.max(0, config.width - visibleLen)
+            line + (" " * padAmount)
+          }
         case Some(bc) =>
           val horizontalBar = bc.horizontal.toString * innerWidth
           val topBorder = s"${bc.topLeft}$horizontalBar${bc.topRight}"
           val bottomBorder = s"${bc.bottomLeft}$horizontalBar${bc.bottomRight}"
           val contentRows = truncatedLines.map { line =>
-            s"${bc.vertical}${line.padTo(innerWidth, ' ')}${bc.vertical}"
+            val visibleLen = stripAnsi(line).length
+            val padAmount = Math.max(0, innerWidth - visibleLen)
+            val padded = line + (" " * padAmount)
+            s"${bc.vertical}$padded${bc.vertical}"
           }
           topBorder +: contentRows :+ bottomBorder
 
@@ -74,21 +84,26 @@ object PanelRenderer:
       else
         val rawLines = text.split("\n", -1).toVector
         rawLines.flatMap { line =>
-          val words = line.split(" ")
-          val (wrapped, last) = words.foldLeft((Vector.empty[String], "")) { case ((acc, currentLine), word) =>
-            if currentLine.isEmpty then
-              if word.length > width then
-                val chunks = word.grouped(width).toVector
-                ((acc ++ chunks.init): Vector[String], chunks.last)
-              else (acc, word)
-            else
-              val potential = s"$currentLine $word"
-              if potential.length > width then
-                if word.length > width then
+          if line.isEmpty then Vector("")
+          else
+            val words = line.split(" ")
+            val (wrapped, last) = words.foldLeft((Vector.empty[String], "")) { case ((acc, currentLine), word) =>
+              val wordLen = stripAnsi(word).length
+              val currentLineLen = stripAnsi(currentLine).length
+              if currentLine.isEmpty then
+                if wordLen > width then
                   val chunks = word.grouped(width).toVector
-                  (((acc :+ currentLine) ++ chunks.init): Vector[String], chunks.last)
-                else (acc :+ currentLine, word)
-              else (acc, potential)
-          }
-          if last.isEmpty then wrapped else wrapped :+ last
+                  ((acc ++ chunks.init): Vector[String], chunks.last)
+                else (acc, word)
+              else
+                val potential = s"$currentLine $word"
+                val potentialLen = currentLineLen + 1 + wordLen
+                if potentialLen > width then
+                  if wordLen > width then
+                    val chunks = word.grouped(width).toVector
+                    (((acc :+ currentLine) ++ chunks.init): Vector[String], chunks.last)
+                  else (acc :+ currentLine, word)
+                else (acc, potential)
+            }
+            if last.isEmpty then wrapped else wrapped :+ last
         }

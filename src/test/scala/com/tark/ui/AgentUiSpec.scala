@@ -54,4 +54,33 @@ class AgentUiSpec extends FunSuite {
     assertEquals(rendered(2), "|World   |")
     assertEquals(rendered(3), "+--------+")
   }
+
+  test("PanelRenderer preserves intentional empty lines") {
+    val config = PanelConfig(width = 10, borderStyle = BorderStyle.None)
+    val state = PanelState(config, Vector("A", "", "B"))
+    val rendered = summon[PanelRenderer[PanelState]].render(state)
+
+    assertEquals(rendered.size, 3)
+    assertEquals(rendered(0), "A         ")
+    assertEquals(rendered(1), "          ")
+    assertEquals(rendered(2), "B         ")
+  }
+
+  test("PanelRenderer aligns borders correctly when lines contain ANSI colors") {
+    val config = PanelConfig(width = 12, borderStyle = BorderStyle.Ascii)
+    // "\u001b[32mGreen\u001b[0m" has physical length of 14 but visible length of 5.
+    val state = PanelState(config, Vector("\u001b[32mGreen\u001b[0m"))
+    val rendered = summon[PanelRenderer[PanelState]].render(state)
+
+    // Config width = 12.
+    // Inner width = 12 - 2 = 10.
+    // Visible length of "\u001b[32mGreen\u001b[0m" is 5.
+    // Padding should add 5 spaces.
+    // Total physical length should be: 1 (left border) + 14 (ANSI string) + 5 (spaces) + 1 (right border) = 21.
+    assertEquals(rendered.size, 3) // Top, Content, Bottom
+    assertEquals(rendered(0), "+----------+")
+    assertEquals(rendered(1), s"|\u001b[32mGreen\u001b[0m     |")
+    assertEquals(rendered(1).length, 21)
+    assertEquals(rendered(2), "+----------+")
+  }
 }
