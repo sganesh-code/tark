@@ -1,12 +1,13 @@
 package com.tark.application.backend
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import com.tark.application.time.Clock
 import com.tark.domain.context.{Context, Session}
 import com.tark.domain.memory.{EpisodeSummary, Memory}
-import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult}
+import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult, OpenAIMessage}
+import com.tark.domain.Interaction
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser}
 import com.tark.domain.{GoalContract, AgentState}
@@ -607,6 +608,78 @@ class DefaultAgentBackendSpec extends FunSuite {
     assertEquals(working.deliverable, "Snake game")
     assertEquals(working.constraints, List("Console-only"))
     assertEquals(working.assumptions, List("Runs locally"))
+  }
+
+  test("Context Distillation: distills tool output during session persistence if threshold exceeded") {
+    var written: Option[Context] = None
+
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.delay {
+        written = Some(data)
+      }
+    }
+
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.raiseError(new AssertionError("summarizer should not be invoked"))
+    }
+
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(1000L)
+    }
+
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+
+    // Config with very low threshold to trigger distillation on "raw tool output" (exceeds 5 chars)
+    val customConfig = com.tark.domain.Config.default.copy(enableDistillation = true, distillationThreshold = 5)
+
+    given com.tark.domain.Config = customConfig
+
+    // ContextDistiller that returns a distilled summary
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] = {
+        // Distiller chat call
+        IO.pure(LLMResponse("distilled output", List.empty, OpenAIUsage(2, 2, 4)))
+      }
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
+
+    // Prepare a ConversationResult containing raw tool output exceeding threshold
+    val rawToolMessage = OpenAIMessage(role = "tool", content = Some("very long raw tool output"), tool_call_id = Some("call_1"))
+    val result = ConversationResult(
+      messages = List(OpenAIMessage(role = "user", content = Some("run")), rawToolMessage),
+      interactions = Vector(Interaction("1", "args", "very long raw tool output", 1000L, "command_executor")),
+      finalAnswer = Some("done")
+    )
+
+    val backendF = DefaultAgentBackend.create[IO](session)
+    val program = backendF.flatMap { backend =>
+      Ref.of[IO, Option[ConversationResult]](Some(result)).flatMap { resultRef =>
+        val task = backend.persistConversationTask(session, resultRef)
+        task.action.compile.drain
+      }
+    }
+
+    program.unsafeRunSync()
+
+    // Assert that the persisted context contains the distilled messages and distilled interactions!
+    assert(written.isDefined)
+    val persisted = written.get
+    val persistedWorking = persisted.memory.working.get
+
+    // The tool message inside AgentState.messages should have "distilled output" instead of "very long raw tool output"!
+    val persistedToolMsg = persistedWorking.messages.find(_.role == "tool").get
+    assertEquals(persistedToolMsg.content, Some("distilled output"))
+
+    // The interaction inside context.history should also have distilled output!
+    val persistedInteraction = persisted.history.head
+    assertEquals(persistedInteraction.output, "distilled output")
   }
 
   private def executeSequentially(

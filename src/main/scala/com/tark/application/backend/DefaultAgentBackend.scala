@@ -4,7 +4,7 @@ import cats.effect.{Ref, Sync}
 import cats.syntax.all.*
 import com.tark.application.time.Clock
 import com.tark.domain.context.{Context, Session}
-import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage}
+import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolCallFunction}
 import com.tark.domain.{AgentState, Config}
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.*
@@ -21,7 +21,9 @@ final class DefaultAgentBackend[F[_]: Sync] private (
   updateCompletionsRef: Ref[F, List[String] => F[Unit]],
   usageRef: Ref[F, OpenAIUsage],
   reactEngine: ReActLoopEngine[F],
-  goalContractParser: GoalContractParser[F]
+  goalContractParser: GoalContractParser[F],
+  contextDistiller: ContextDistiller[F],
+  config: Config
 )(using
   sink: Sink[F, Context, Path],
   summarizer: EpisodicMemorySummarizer[F],
@@ -80,16 +82,17 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     }
   }
 
-  private def persistConversationTask(session: Session, resultRef: Ref[F, Option[ConversationResult]]): AgentTask[F] =
+  private[backend] def persistConversationTask(session: Session, resultRef: Ref[F, Option[ConversationResult]]): AgentTask[F] =
     AgentTask(
       description = Some("Persisting session"),
       action =
         Stream.eval {
           resultRef.get.flatMap {
             case Some(result) =>
-              val updatedContext = updateContextAfterConversation(session.context, result)
-              val updatedSession = session.copy(context = updatedContext)
-              sink.write(updatedContext, session.sessionPath) >> sessionRef.set(updatedSession)
+              updateContextAfterConversation(session.context, result).flatMap { updatedContext =>
+                val updatedSession = session.copy(context = updatedContext)
+                sink.write(updatedContext, session.sessionPath) >> sessionRef.set(updatedSession)
+              }
             case None =>
               Sync[F].unit
           }
@@ -109,16 +112,42 @@ final class DefaultAgentBackend[F[_]: Sync] private (
       }
     }
 
-  private def updateContextAfterConversation(context: Context, result: ConversationResult): Context = {
+  private def updateContextAfterConversation(context: Context, result: ConversationResult): F[Context] = {
     val currentAgentState = context.memory.working.getOrElse(AgentState())
-    val nextAgentState = currentAgentState.copy(
-      messages = result.messages,
-      candidateAnswer = result.finalAnswer,
-      done = result.finalAnswer.isDefined,
-      reasonForStop = result.finalAnswer.map(_ => "assistant_response")
-    )
-    context.copy(
-      history = context.history ++ result.interactions,
+
+    val distilledMessagesF = result.messages.traverse { msg =>
+      if (msg.role == "tool" && config.enableDistillation && msg.content.exists(_.length > config.distillationThreshold)) {
+        val toolCall = ToolCall(msg.tool_call_id.getOrElse(""), "function", ToolCallFunction("unknown", ""))
+        contextDistiller.distill(context, toolCall, msg.content.get).map { distilled =>
+          msg.copy(content = Some(distilled))
+        }
+      } else {
+        Sync[F].pure(msg)
+      }
+    }
+
+    val distilledInteractionsF = result.interactions.traverse { interaction =>
+      if (config.enableDistillation && interaction.output.length > config.distillationThreshold) {
+        val toolCall = ToolCall(interaction.id, "function", ToolCallFunction(interaction.toolName, ""))
+        contextDistiller.distill(context, toolCall, interaction.output).map { distilled =>
+          interaction.copy(output = distilled)
+        }
+      } else {
+        Sync[F].pure(interaction)
+      }
+    }
+
+    for {
+      distilledMessages <- distilledMessagesF
+      distilledInteractions <- distilledInteractionsF
+      nextAgentState = currentAgentState.copy(
+        messages = distilledMessages,
+        candidateAnswer = result.finalAnswer,
+        done = result.finalAnswer.isDefined,
+        reasonForStop = result.finalAnswer.map(_ => "assistant_response")
+      )
+    } yield context.copy(
+      history = context.history ++ distilledInteractions,
       memory = context.memory.copy(working = Some(nextAgentState))
     )
   }
@@ -143,8 +172,8 @@ object DefaultAgentBackend {
       streamingHandler = StreamingResponseHandler[F](streamingLlmClient, llmClient, usageRef, config)
       toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
       contextDistiller = ContextDistiller[F](llmClient)
-      reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, contextDistiller, config)
-    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser)
+      reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, config)
+    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, contextDistiller, config)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
     sink: Sink[F, Context, Path],
