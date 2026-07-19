@@ -158,7 +158,7 @@ object OpenAIResponseChoice {
 object OpenAIMessage {
   given Encoder[OpenAIMessage] = Encoder.instance { msg =>
     val base = JsonObject("role" -> msg.role.asJson)
-    val withContent = msg.content.fold(base)(content => base.add("content", content.asJson))
+    val withContent = base.add("content", msg.content.fold(Json.Null)(_.asJson))
     val withToolCalls = msg.tool_calls.fold(withContent)(calls => withContent.add("tool_calls", calls.asJson))
     val withToolCallId = msg.tool_call_id.fold(withToolCalls)(id => withToolCalls.add("tool_call_id", id.asJson))
     Json.fromJsonObject(withToolCallId)
