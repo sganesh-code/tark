@@ -5,6 +5,26 @@ import cats.effect.IO
 import scala.sys.process.*
 
 object DockerSandboxLifecycle {
+  def ensureImageExists(imageName: String, forceBuild: Boolean): IO[Unit] = IO.blocking {
+    val imageExists = try {
+      Process(Seq("docker", "image", "inspect", imageName)).! == 0
+    } catch {
+      case _: Exception => false
+    }
+
+    if (!imageExists || forceBuild) {
+      println(s"Building Docker sandbox image $imageName...")
+      try {
+        Process(Seq("docker", "build", "-t", imageName, ".")).!!
+        ()
+      } catch {
+        case e: Exception => println(s"Warning: Docker build skipped/failed: ${e.getMessage}")
+      }
+    } else {
+      println(s"Docker sandbox image $imageName already exists. Skipping build.")
+    }
+  }.void
+
   def start(sandbox: DockerSandbox): IO[Unit] = IO.blocking {
     try {
       Process(Seq("docker", "rm", "-f", sandbox.name)).!!
@@ -12,14 +32,22 @@ object DockerSandboxLifecycle {
       case _: Exception => ""
     }
 
-    Process(Seq(
-      "docker", "run", "-d",
-      "--name", sandbox.name,
-      "-v", s"${sandbox.hostPath.toAbsolutePath}:${sandbox.containerPath}",
-      "-w", sandbox.containerPath,
-      sandbox.imageName,
-      "tail", "-f", "/dev/null"
-    )).!!
+    try {
+      Process(Seq(
+        "docker", "run", "-d",
+        "--name", sandbox.name,
+        "-v", s"${sandbox.hostPath.toAbsolutePath}:${sandbox.containerPath}",
+        "-w", sandbox.containerPath,
+        sandbox.imageName,
+        "tail", "-f", "/dev/null"
+      )).!!
+    } catch {
+      case e: Exception =>
+        throw new RuntimeException(
+          s"Failed to start Docker sandbox container. Please ensure Docker is running, installed on your system, and the image '${sandbox.imageName}' is built successfully. Details: ${e.getMessage}",
+          e
+        )
+    }
   }.void
 
   def stop(sandbox: DockerSandbox): IO[Unit] = IO.blocking {

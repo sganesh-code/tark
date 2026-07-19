@@ -24,10 +24,13 @@ A single critical resource leak was identified in the new `FileSessionRepository
   - [x] Verify the change by running the test suite (`sbt test`) and ensuring no regressions are introduced.
     - *Ran the full unit test suite (sbt "testOnly *") which verified all 63 unit tests passed successfully without regressions.*
 
-- [ ] **[Suggestion] Enhance Docker command error handling in Sandbox Lifecycle**
-  - [ ] Investigate current behavior of `DockerSandboxLifecycle` when Docker is not installed or when the Docker daemon is not running (currently `Process(...).!!` throws raw `IOException`s or exits with uncaught exceptions).
-  - [ ] Wrap process execution commands in a standard `try/catch` and raise descriptive, helpful exceptions (e.g. "Failed to start Docker sandbox container. Please ensure Docker is running and installed on your system").
-  - [ ] Verify the updated exception flow with a test or mock process scenario.
+- [x] **[Suggestion] Enhance Docker command error handling in Sandbox Lifecycle**
+  - [x] Investigate current behavior of `DockerSandboxLifecycle` when Docker is not installed or when the Docker daemon is not running (currently `Process(...).!!` throws raw `IOException`s or exits with uncaught exceptions).
+    - *Confirmed that if the Docker binary is missing or the Docker daemon is not running, Process(...).!! inside `start` throws raw, uncaught exceptions that propagate directly up, whereas we want descriptive, friendly error messages to help the user diagnose setup issues.*
+  - [x] Wrap process execution commands in a standard `try/catch` and raise descriptive, helpful exceptions (e.g. "Failed to start Docker sandbox container. Please ensure Docker is running and installed on your system").
+    - *Wrapped the Docker run process invocation in DockerSandboxLifecycle.start in a try-catch block, throwing a custom RuntimeException with instructions on checking Docker daemon and image state.*
+  - [x] Verify the updated exception flow with a test or mock process scenario.
+    - *Created a new unit test suite (DockerSandboxLifecycleSpec.scala) that triggers a Docker run failure and asserts that our custom, helpful error message is successfully raised.*
 
 - [ ] **[Suggestion] Standardize direct use of println/Console output**
   - [ ] Investigate the direct use of `println` in `DockerSandboxLifecycle.scala` and `DefaultSessionProvider.scala`.
