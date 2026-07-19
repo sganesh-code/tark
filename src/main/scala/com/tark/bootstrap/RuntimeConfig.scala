@@ -16,7 +16,9 @@ object RuntimeConfig {
       modelId = env.getOrElse("TARK_OLLAMA_MODEL", Config.DefaultModelId),
       maxTokens = env.get("TARK_MAX_TOKENS").flatMap(_.toIntOption).getOrElse(Config.DefaultMaxTokens),
       baseUrl = env.getOrElse("TARK_OLLAMA_URL", Config.DefaultBaseUrl),
-      sandboxImageName = env.getOrElse("TARK_SANDBOX_IMAGE", Config.DefaultSandboxImageName)
+      sandboxImageName = env.getOrElse("TARK_SANDBOX_IMAGE", Config.DefaultSandboxImageName),
+      panelWidth = env.get("TARK_PANEL_WIDTH").flatMap(_.toIntOption).getOrElse(80),
+      panelBorder = env.getOrElse("TARK_PANEL_BORDER", "rounded")
     )
 
     RuntimeConfig(

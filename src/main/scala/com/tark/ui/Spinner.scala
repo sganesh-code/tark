@@ -1,5 +1,6 @@
 package com.tark.ui
 
+import cats.Applicative
 import cats.effect.Resource
 
 import scala.concurrent.duration.FiniteDuration
@@ -25,6 +26,8 @@ trait TerminalStatus[F[_]]:
   def update(content: String): F[Unit]
   def clear(): F[Unit]
   def updatePersistent(content: String): F[Unit] = update(content)
+  def updatePanel(lines: Vector[String])(using F: Applicative[F]): F[Unit] = F.unit
+  def clearPanel()(using F: Applicative[F]): F[Unit] = F.unit
 
 trait Spinner[F[_], A]:
   def create(frame: A, message: String)(using

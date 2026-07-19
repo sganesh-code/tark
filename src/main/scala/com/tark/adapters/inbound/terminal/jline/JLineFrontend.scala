@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import com.tark.ports.AgentBackend
 import com.tark.ui.*
+import com.tark.domain.Config
 import fs2.Stream
 import org.jline.reader.impl.history.DefaultHistory
 import org.jline.reader.{Candidate, Completer, EndOfFileException, Highlighter, LineReader, LineReaderBuilder, ParsedLine, UserInterruptException}
@@ -192,6 +193,7 @@ final class JLineTerminalStatus(terminal: Terminal) extends TerminalStatus[IO]:
   private val status: Option[Status] = Option(Status.getStatus(terminal))
   @volatile private var activeSpinner: String = ""
   @volatile private var persistentStatus: String = ""
+  @volatile private var activePanelLines: Vector[String] = Vector.empty
 
   private def redraw(): Unit = {
     val parts = List(
@@ -199,11 +201,18 @@ final class JLineTerminalStatus(terminal: Terminal) extends TerminalStatus[IO]:
       Option(persistentStatus).filter(_.nonEmpty)
     ).flatten
     status.foreach { s =>
-      if (parts.isEmpty) {
+      if (parts.isEmpty && activePanelLines.isEmpty) {
         s.update(Collections.emptyList())
       } else {
-        val combined = parts.mkString(" | ")
-        s.update(Collections.singletonList(AttributedString.fromAnsi(s"\u001b[33m$combined\u001b[0m")))
+        val lines = new java.util.ArrayList[AttributedString]()
+        if (parts.nonEmpty) {
+          val combined = parts.mkString(" | ")
+          lines.add(AttributedString.fromAnsi(s"\u001b[33m$combined\u001b[0m"))
+        }
+        activePanelLines.foreach { line =>
+          lines.add(AttributedString.fromAnsi(line))
+        }
+        s.update(lines)
       }
     }
   }
@@ -223,6 +232,18 @@ final class JLineTerminalStatus(terminal: Terminal) extends TerminalStatus[IO]:
   override def updatePersistent(content: String): IO[Unit] =
     IO.blocking {
       persistentStatus = content
+      redraw()
+    }
+
+  override def updatePanel(lines: Vector[String])(using F: cats.Applicative[IO]): IO[Unit] =
+    IO.blocking {
+      activePanelLines = lines
+      redraw()
+    }
+
+  override def clearPanel()(using F: cats.Applicative[IO]): IO[Unit] =
+    IO.blocking {
+      activePanelLines = Vector.empty
       redraw()
     }
 
@@ -276,7 +297,8 @@ final class JLineFrontend(
   backend: AgentBackend[IO],
   scheduler: Schedulable[IO],
   animatable: Animatable[SpinnerFrames],
-  status: TerminalStatus[IO]
+  status: TerminalStatus[IO],
+  config: Config = Config.default
 ) extends AgentFrontend[IO] {
 
   private val frames = SpinnerFrames(Vector("|", "/", "-", "\\"))
@@ -298,41 +320,68 @@ final class JLineFrontend(
   }
 
   private def executeActions(actions: Stream[IO, AgentAction[IO]]): IO[Unit] =
-    Ref.of[IO, Boolean](false).flatMap { inlineOpen =>
-      def closeInline: IO[Unit] =
-        inlineOpen.get.ifM(writer.finishInline() >> inlineOpen.set(false), IO.unit)
+    Ref.of[IO, Option[PanelState]](None).flatMap { panelStateRef =>
+      val panelConfig = PanelConfig(
+        width = config.panelWidth,
+        borderStyle = BorderStyle.fromString(config.panelBorder)
+      )
 
-      def appendAgentDelta(text: String): IO[Unit] =
-        inlineOpen.get.ifM(
-          writer.appendInline(text, TerminalStyle.Agent),
-          writer.startInline("Agent", TerminalStyle.Agent) >> writer.appendInline(text, TerminalStyle.Agent) >> inlineOpen.set(true)
-        )
+      Ref.of[IO, Boolean](false).flatMap { inlineOpen =>
+        def closeInline: IO[Unit] =
+          inlineOpen.get.ifM(writer.finishInline() >> inlineOpen.set(false), IO.unit)
 
-      actions.evalMap {
-        case AgentAction.Log(text) =>
-          closeInline >> writer.printAbove("Agent", text, TerminalStyle.Agent)
+        def appendAgentDelta(text: String): IO[Unit] =
+          inlineOpen.get.ifM(
+            writer.appendInline(text, TerminalStyle.Agent),
+            writer.startInline("Agent", TerminalStyle.Agent) >> writer.appendInline(text, TerminalStyle.Agent) >> inlineOpen.set(true)
+          )
 
-        case AgentAction.AssistantDelta(text) =>
-          appendAgentDelta(text)
+        actions.evalMap {
+          case AgentAction.Log(text) =>
+            closeInline >> writer.printAbove("Agent", text, TerminalStyle.Agent)
 
-        case AgentAction.AssistantEnd() =>
-          closeInline
+          case AgentAction.AssistantDelta(text) =>
+            appendAgentDelta(text)
 
-        case AgentAction.SystemMessage(text) =>
-          closeInline >> writer.printSystemMessage(text, TerminalStyle.System)
+          case AgentAction.AssistantEnd() =>
+            closeInline
 
-        case AgentAction.ClearScreen() =>
-          closeInline >> writer.clearScreen() >> writer.flush()
+          case AgentAction.SystemMessage(text) =>
+            closeInline >> writer.printSystemMessage(text, TerminalStyle.System)
 
-        case AgentAction.Exit() =>
-          closeInline >> exitRequested.set(true)
+          case AgentAction.ClearScreen() =>
+            closeInline >> writer.clearScreen() >> writer.flush()
 
-        case AgentAction.StatusUpdate(text) =>
-          status.updatePersistent(text)
+          case AgentAction.Exit() =>
+            closeInline >> exitRequested.set(true)
 
-        case AgentAction.RequestChoice(prompt, options, allowCustom, onSelected) =>
-          closeInline >> reader.readChoice(prompt, options, allowCustom).flatMap(choice => executeActions(onSelected(choice)))
-      }.compile.drain.guarantee(closeInline)
+          case AgentAction.StatusUpdate(text) =>
+            status.updatePersistent(text)
+
+          case AgentAction.ToolCallStart(name) =>
+            val state = PanelState(panelConfig, Vector(s"Executing tool: $name"))
+            val rendered = summon[PanelRenderer[PanelState]].render(state)
+            panelStateRef.set(Some(state)) >> status.updatePanel(rendered)
+
+          case AgentAction.ToolCallOutput(text) =>
+            panelStateRef.get.flatMap {
+              case Some(state) =>
+                val updated = state.copy(contentLines = state.contentLines :+ text)
+                val rendered = summon[PanelRenderer[PanelState]].render(updated)
+                panelStateRef.set(Some(updated)) >> status.updatePanel(rendered)
+              case None =>
+                val state = PanelState(panelConfig, Vector(text))
+                val rendered = summon[PanelRenderer[PanelState]].render(state)
+                panelStateRef.set(Some(state)) >> status.updatePanel(rendered)
+            }
+
+          case AgentAction.ToolCallEnd() =>
+            panelStateRef.set(None) >> status.clearPanel()
+
+          case AgentAction.RequestChoice(prompt, options, allowCustom, onSelected) =>
+            closeInline >> reader.readChoice(prompt, options, allowCustom).flatMap(choice => executeActions(onSelected(choice)))
+        }.compile.drain.guarantee(closeInline >> status.clearPanel() >> panelStateRef.set(None))
+      }
     }
 
   def loop: IO[Unit] = {
@@ -394,7 +443,7 @@ object JLineFrontend:
     terminal: Terminal,
     lineReader: LineReader,
     backend: AgentBackend[IO]
-  ): Resource[IO, JLineFrontend] =
+  )(using Config): Resource[IO, JLineFrontend] =
     Resource.eval {
       for {
         exitRequested <- Ref.of[IO, Boolean](false)

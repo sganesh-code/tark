@@ -7,7 +7,9 @@ case class Config(
                  modelId: String,
                  maxTokens: Int,
                  baseUrl: String,
-                 sandboxImageName: String
+                 sandboxImageName: String,
+                 panelWidth: Int = 80,
+                 panelBorder: String = "rounded"
                  )
 
 object Config {
@@ -20,7 +22,9 @@ object Config {
     modelId = DefaultModelId,
     maxTokens = DefaultMaxTokens,
     baseUrl = DefaultBaseUrl,
-    sandboxImageName = DefaultSandboxImageName
+    sandboxImageName = DefaultSandboxImageName,
+    panelWidth = 80,
+    panelBorder = "rounded"
   )
 
   given Encoder[Config] = deriveEncoder

@@ -169,7 +169,79 @@ class JLineFrontendSpec extends FunSuite {
     )
   }
 
-  test("JLineTerminalStatus combines active spinner and persistent status") {
+  test("JLineFrontend handles ToolCall start, output, and end actions by updating panel status") {
+    val events = ArrayBuffer.empty[String]
+
+    given backend: AgentBackend[IO] with {
+      override def registerCompletions(update: List[String] => IO[Unit]): IO[Unit] = IO.unit
+      override def handleInput(input: String): Stream[IO, AgentTask[IO]] =
+        Stream.emit(
+          AgentTask(
+            None,
+            Stream(
+              AgentAction.ToolCallStart("test_tool"),
+              AgentAction.ToolCallOutput("output content"),
+              AgentAction.ToolCallEnd()
+            )
+          )
+        )
+    }
+
+    val program = for {
+      exitRequested <- Ref.of[IO, Boolean](false)
+      frontend = {
+        given Schedulable[IO] with {
+          override def schedule(task: IO[Unit], delay: FiniteDuration, period: FiniteDuration): IO[Unit] = task
+        }
+
+        given Animatable[SpinnerFrames] = Animatable.spinnerFrames
+        given TerminalStatus[IO] with {
+          override def update(content: String): IO[Unit] = IO.delay(events += s"status:$content").void
+          override def clear(): IO[Unit] = IO.delay(events += "status:clear").void
+          override def updatePanel(lines: Vector[String])(using F: cats.Applicative[IO]): IO[Unit] =
+            IO.delay(events += s"panel:${lines.mkString(",")}").void
+          override def clearPanel()(using F: cats.Applicative[IO]): IO[Unit] =
+            IO.delay(events += "panel:clear").void
+        }
+
+        val writer = new TerminalWriter[IO] {
+          override def printAbove(sender: String, message: String, style: TerminalStyle): IO[Unit] = IO.unit
+          override def startInline(sender: String, style: TerminalStyle): IO[Unit] = IO.unit
+          override def appendInline(message: String, style: TerminalStyle): IO[Unit] = IO.unit
+          override def finishInline(): IO[Unit] = IO.unit
+          override def printSystemMessage(message: String, style: TerminalStyle): IO[Unit] = IO.unit
+          override def printLine(message: String): IO[Unit] = IO.unit
+          override def clearScreen(): IO[Unit] = IO.unit
+          override def flush(): IO[Unit] = IO.unit
+        }
+
+        val reader = new TerminalReader[IO] {
+          override def readLine(promptPrefix: String): IO[InputResult] = IO.pure(InputResult.Exit)
+          override def readChoice(prompt: String, options: List[String], allowCustom: Boolean): IO[String] =
+            IO.pure(options.headOption.getOrElse(""))
+        }
+
+        val spinner = new Spinner[IO, SpinnerFrames] {
+          override def create(frame: SpinnerFrames, message: String)(using
+            scheduler: Schedulable[IO],
+            animatable: Animatable[SpinnerFrames],
+            status: TerminalStatus[IO]
+          ): Resource[IO, Unit] = Resource.unit
+        }
+
+        JLineFrontend(writer, reader, spinner, exitRequested)
+      }
+      _ <- frontend.handleInput("run")
+    } yield ()
+
+    program.unsafeRunSync()
+
+    assert(events.exists(_.contains("Executing tool: test_tool")))
+    assert(events.exists(_.contains("output content")))
+    assert(events.contains("panel:clear"))
+  }
+
+  test("JLineTerminalStatus combines active spinner, persistent status, and sub-panel lines") {
     import org.jline.terminal.TerminalBuilder
     val terminal = TerminalBuilder.builder().dumb(true).build()
     val status = JLineTerminalStatus(terminal)
@@ -177,6 +249,8 @@ class JLineFrontendSpec extends FunSuite {
     val program = for {
       _ <- status.updatePersistent("Usage info")
       _ <- status.update("Loading")
+      _ <- status.updatePanel(Vector("┌───────┐", "│Panel  │", "└───────┘"))
+      _ <- status.clearPanel()
       _ <- status.clear()
     } yield ()
 

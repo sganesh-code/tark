@@ -1,0 +1,45 @@
+# Implementation Plan: TUI Tool Call Sub-Panel
+
+- [x] **🎟️ TARK-PANEL: Interactive Tool Call Sub-Panel**
+  - **Description:** Implement a temporary, configurable sub-panel displaying tool call execution details and outputs. The sub-panel will reside in JLine's dynamic status bar area, wrapping text to a fixed width and styled with configurable borders. It will disappear completely upon tool call execution completion to leave terminal scrollback perfectly clean for assistant responses.
+  - **Scope:**
+    - **In scope:**
+      - Model and configuration structures (`com.tark.domain.Config`, `com.tark.bootstrap.RuntimeConfig`).
+      - UI sub-panel definitions, state, and `PanelRenderer` typeclass (`com.tark.ui.Spinner`, `com.tark.ui.AgentUi`).
+      - Tool call semantic actions (`com.tark.ui.AgentAction`).
+      - Backend ReAct execution loop wrapping (`com.tark.application.backend.ReActLoopEngine`).
+      - JLine status rendering and event handling (`com.tark.adapters.inbound.terminal.jline.JLineFrontend`).
+    - **Out of scope:**
+      - Modifying slash command execution outputs (`/run`).
+      - Introducing global state or external styling libraries.
+  - **Implementation Tasks:**
+    - [x] **Investigate:** Review existing terminal layouts and spinner structures in `@src/main/scala/com/tark/ui/Spinner.scala` and `@src/main/scala/com/tark/adapters/inbound/terminal/jline/JLineFrontend.scala`.
+      - *Investigated JLineTerminalStatus integration with org.jline.terminal.Status. Confirmed that multi-line status bar update via Java List of AttributedString is fully supported and is clean, flicker-free, and transient.*
+    - [x] **Implement Config Extensibility:**
+      - Add `panelWidth: Int = 80` and `panelBorder: String = "rounded"` fields to `Config` in `@src/main/scala/com/tark/domain/Config.scala`.
+      - Read env overrides `TARK_PANEL_WIDTH` and `TARK_PANEL_BORDER` in `RuntimeConfig` inside `@src/main/scala/com/tark/bootstrap/RuntimeConfig.scala`.
+      - *Extended Config case class with panelWidth and panelBorder fields, including defaults. Updated RuntimeConfig to parse environment variables TARK_PANEL_WIDTH and TARK_PANEL_BORDER with fallback handling. Verified compilation.*
+    - [x] **Implement Pure Panel Models & Renderer:**
+      - Define `BorderStyle`, `BorderChars`, `PanelConfig`, and `PanelState` in `@src/main/scala/com/tark/ui/Spinner.scala` (or a dedicated panel file).
+      - Implement a typeclass `PanelRenderer[A]` and its given instance `PanelRenderer[PanelState]` to handle professional word-wrapping and border drawing.
+      - *Created SubPanel.scala containing BorderStyle, BorderChars, PanelConfig, PanelState, and PanelRenderer typeclass. Implemented a robust word-wrapping and padding algorithm with configurable borders. Fully verified with sbt compilation.*
+    - [x] **Expand TerminalStatus Typeclass:**
+      - Add `updatePanel(lines: Vector[String])` and `clearPanel()` to `TerminalStatus[F]` in `@src/main/scala/com/tark/ui/Spinner.scala` with clean Cats `Applicative` default no-op implementations.
+      - *Added updatePanel and clearPanel to TerminalStatus[F] with safe, backward-compatible default implementations using cats.Applicative. Verified compilation.*
+    - [x] **Define Semantic Agent Actions:**
+      - Add `ToolCallStart`, `ToolCallOutput`, and `ToolCallEnd` case classes to `AgentAction[F]` in `@src/main/scala/com/tark/ui/AgentUi.scala`.
+      - *Added ToolCallStart[F], ToolCallOutput[F], and ToolCallEnd[F] case classes to AgentAction[F]. Confirmed that the compiler successfully emitted exhaustivity warnings, validating our structural changes.*
+    - [x] **Integrate ReAct Loop Engine:**
+      - Wrap tool calls in `@src/main/scala/com/tark/application/backend/ReActLoopEngine.scala` with `ToolCallStart`, `ToolCallOutput`, and `ToolCallEnd` stream emissions.
+      - *Integrated semantic actions ToolCallStart, ToolCallOutput, and ToolCallEnd around tool execution in ReActLoopEngine. Cleared legacy Log and SystemMessage outputs, which are now correctly routed via semantic events. Verified compilation.*
+    - [x] **Implement JLine Rendering:**
+      - Update `JLineTerminalStatus` inside `@src/main/scala/com/tark/adapters/inbound/terminal/jline/JLineFrontend.scala` to merge and render both active spinner and active panel lines atomically into `Status`.
+      - Handle new `AgentAction` cases inside `JLineFrontend.executeActions` by keeping local state in a `Ref[IO, Option[PanelState]]` and refreshing the panel display. Ensure a `.guarantee` cleanly teardowns the panel.
+      - *Refactored JLineTerminalStatus to manage both the single-line spinner and multi-line panel rendering in Status atomically. Implemented dynamic subpanel management in JLineFrontend using a local Ref[IO, Option[PanelState]] and registered standard ToolCall start, output, and end events with guaranteed teardown. Compiles cleanly.*
+    - [x] **Test:**
+      - Add unit tests for `PanelRenderer` word wrapping and border styling in `@src/test/scala/com/tark/ui/AgentUiSpec.scala`.
+      - Add unit tests for `JLineTerminalStatus` multi-line status merging and `JLineFrontend` tool action handling in `@src/test/scala/com/tark/adapters/inbound/terminal/jline/JLineFrontendSpec.scala`.
+      - Ensure all existing and new tests compile and pass via `sbt "testOnly *"` and compile cleanly.
+      - *Added comprehensive unit tests to AgentUiSpec covering PanelRenderer word-wrapping, padding, and borders across different styles. Added integration tests to JLineFrontendSpec verifying JLineTerminalStatus multi-line rendering and JLineFrontend semantic action processing. All 75 tests passed successfully.*
+    - [x] **Verify:** Run the application locally (or run full tests) to ensure that the hexagonal architecture dependencies are checked and verified without layer-violation errors via `sbt "testOnly com.tark.architecture.HexagonalBoundarySpec"`.
+      - *Ran the HexagonalBoundarySpec static verification suite. Confirmed 100% boundary integrity with zero layer-bypass violations across the domain, ports, adapters, application, and UI packages.*
