@@ -1,5 +1,7 @@
 scalaVersion := "3.8.4"
 
+enablePlugins(JavaAppPackaging)
+
 val catsVersion = "2.12.0" // Or check latest
 val catsEffectVersion = "3.5.4" // Or check latest
 val fs2Version = "3.13.0" // Check for the latest release

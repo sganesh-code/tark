@@ -10,27 +10,18 @@ import scala.sys.process.*
 
 object CommandTool {
   given commandExecutor[F[_]: Sync]: CommandExecutor[F] with {
-    override def definition: ToolDefinition = CommandTool.definition
+    override def definition: ToolDefinition = com.tark.domain.tool.CommandTool.definition
     override def execute(context: Context, toolCall: ToolCall): F[ToolResult] =
       CommandTool.execute(context, toolCall)
   }
 
-  val definition: ToolDefinition = ToolDefinition(
-    `type` = "function",
-    function = OpenAIFunction(
-      name = "command_executor",
-      description = "Execute linux shell commands inside the configured sandbox",
-      parameters = OpenAIFunctionParams.Str(
-        description = "JSON object containing a command field with the full command to execute"
-      )
-    )
-  )
+  val definition: ToolDefinition = com.tark.domain.tool.CommandTool.definition
 
   def commandFrom(toolCall: ToolCall): Either[String, String] =
-    CommandArgumentExtractor.commandFrom(toolCall)
+    com.tark.domain.tool.CommandTool.commandFrom(toolCall)
 
   def execute[F[_]: Sync](context: Context, toolCall: ToolCall): F[ToolResult] =
-    CommandArgumentExtractor.commandFrom(toolCall) match {
+    com.tark.domain.tool.CommandTool.commandFrom(toolCall) match {
       case Left(error) =>
         Sync[F].pure(ToolResult(s"Command failed: $error"))
       case Right(command) =>
