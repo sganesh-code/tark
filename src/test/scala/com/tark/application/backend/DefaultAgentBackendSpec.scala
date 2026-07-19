@@ -353,7 +353,7 @@ class DefaultAgentBackendSpec extends FunSuite {
       results.map(_._1),
       List(
         Some("Waiting for assistant response"),
-        Some("Executing tool: command_executor"),
+        None,
         Some("Waiting for assistant response after tool results"),
         Some("Finalizing assistant response"),
         Some("Persisting session")
@@ -442,7 +442,7 @@ class DefaultAgentBackendSpec extends FunSuite {
       results.map(_._1),
       List(
         Some("Waiting for assistant response"),
-        Some("Executing tool: command_executor"),
+        None,
         Some("Waiting for assistant response after tool results"),
         Some("Finalizing assistant response"),
         Some("Persisting session")

@@ -77,7 +77,7 @@ final class ReActLoopEngine[F[_]: Sync](
                       val toolActionStream = toolCallExecutor.execute(context, toolCall, resultRef)
 
                       AgentTask(
-                        description = Some(s"Executing tool: ${toolCall.function.name}"),
+                        description = None,
                         action =
                           Stream.emit(AgentAction.ToolCallStart(toolCall.function.name)) ++
                             toolActionStream ++
