@@ -2,12 +2,9 @@ package com.tark.adapters.tool.command
 
 import cats.effect.Sync
 import cats.syntax.all.*
-import com.tark.adapters.sandbox.docker.DockerSandbox
-import com.tark.adapters.sandbox.local.LocalProcessSandbox
 import com.tark.domain.context.Context
 import com.tark.domain.tool.*
 import com.tark.ports.outbound.tool.CommandExecutor
-import io.circe.parser
 
 import scala.sys.process.*
 
@@ -29,29 +26,11 @@ object CommandTool {
     )
   )
 
-  private def stripQuotes(s: String): String = {
-    val trimmed = s.trim
-    if (
-      (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
-      (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-      (trimmed.startsWith("`") && trimmed.endsWith("`"))
-    ) trimmed.drop(1).dropRight(1).trim
-    else trimmed
-  }
-
   def commandFrom(toolCall: ToolCall): Either[String, String] =
-    parser.parse(toolCall.function.arguments).leftMap(_.getMessage).flatMap { json =>
-      json.hcursor.get[Option[String]]("command").leftMap(_.getMessage).flatMap {
-        case Some(command) => Right(stripQuotes(command))
-        case None => Left("Tool argument 'command' is missing.")
-      }
-    }.flatMap {
-      case "" => Left("Tool argument 'command' is empty.")
-      case command => Right(command)
-    }
+    CommandArgumentExtractor.commandFrom(toolCall)
 
   def execute[F[_]: Sync](context: Context, toolCall: ToolCall): F[ToolResult] =
-    commandFrom(toolCall) match {
+    CommandArgumentExtractor.commandFrom(toolCall) match {
       case Left(error) =>
         Sync[F].pure(ToolResult(s"Command failed: $error"))
       case Right(command) =>
@@ -60,14 +39,11 @@ object CommandTool {
 
   private def runCommand[F[_]: Sync](context: Context, command: String): F[String] =
     Sync[F].blocking {
-      val process = context.sandbox match {
-        case Some(sandbox: DockerSandbox) =>
-          Process(Seq("docker", "exec", sandbox.name, "sh", "-c", command))
-        case Some(sandbox: LocalProcessSandbox) =>
-          Process(Seq("sh", "-c", command), sandbox.allowedDirectory.toFile)
-        case _ =>
-          Process(Seq("sh", "-c", command))
+      val (cmdSeq, workingDir) = context.sandbox match {
+        case Some(sandbox) => sandbox.buildProcess(command)
+        case None => (Seq("sh", "-c", command), None)
       }
+      val process = Process(cmdSeq, workingDir)
 
       val stdout = new java.lang.StringBuilder
       val stderr = new java.lang.StringBuilder

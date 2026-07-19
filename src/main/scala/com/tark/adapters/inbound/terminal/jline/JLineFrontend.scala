@@ -15,6 +15,83 @@ import org.jline.utils.{AttributedString, AttributedStringBuilder, AttributedSty
 import java.util.Collections
 import scala.concurrent.duration.*
 
+private[jline] object JLineChoiceMenu {
+  enum Key:
+    case Up, Down, Enter, Escape
+    case Other(code: Int)
+
+  def select(terminal: Terminal, prompt: String, options: List[String], allowCustom: Boolean): Int = {
+    val originalAttributes = terminal.enterRawMode()
+    val reader = terminal.reader()
+    val menuOptions = if allowCustom then options :+ "[Custom Option...]" else options
+    var selectedIndex = 0
+    var selecting = true
+
+    def drawMenu(): Unit = {
+      val writer = terminal.writer()
+      writer.println(s"\u001b[32m?\u001b[0m $prompt (Use arrow/jk keys, Enter to select):")
+      menuOptions.zipWithIndex.foreach { case (option, idx) =>
+        if idx == selectedIndex then writer.println(s"  \u001b[36m> $option\u001b[0m")
+        else writer.println(s"    $option")
+      }
+      terminal.flush()
+    }
+
+    def clearMenu(): Unit = {
+      val writer = terminal.writer()
+      writer.print(s"\u001b[${menuOptions.size + 1}A\r")
+      writer.print("\u001b[0J")
+      terminal.flush()
+    }
+
+    def readKey(): Key = {
+      val c = reader.read()
+      if c == 27 then {
+        val c2 = reader.read(10)
+        if c2 == 91 then
+          reader.read(10) match {
+            case 65 => Key.Up
+            case 66 => Key.Down
+            case _  => Key.Other(c)
+          }
+        else Key.Escape
+      } else if c == 10 || c == 13 then Key.Enter
+      else if c == 'k' || c == 'K' then Key.Up
+      else if c == 'j' || c == 'J' then Key.Down
+      else if c == 3 || c == 4 then Key.Escape
+      else Key.Other(c)
+    }
+
+    try {
+      drawMenu()
+      while selecting do
+        readKey() match {
+          case Key.Up =>
+            clearMenu()
+            selectedIndex = (selectedIndex - 1 + menuOptions.size) % menuOptions.size
+            drawMenu()
+          case Key.Down =>
+            clearMenu()
+            selectedIndex = (selectedIndex + 1) % menuOptions.size
+            drawMenu()
+          case Key.Enter =>
+            selecting = false
+          case Key.Escape =>
+            selectedIndex = -1
+            selecting = false
+          case Key.Other(_) =>
+            ()
+        }
+    } finally {
+      terminal.setAttributes(originalAttributes)
+      terminal.writer().print("\r")
+      terminal.flush()
+    }
+
+    selectedIndex
+  }
+}
+
 final class JLineTerminalReader(lineReader: LineReader) extends TerminalReader[IO]:
   override def readLine(promptPrefix: String): IO[InputResult] =
     IO.blocking {
@@ -30,76 +107,8 @@ final class JLineTerminalReader(lineReader: LineReader) extends TerminalReader[I
   override def readChoice(prompt: String, options: List[String], allowCustom: Boolean): IO[String] =
     IO.blocking {
       val terminal = lineReader.getTerminal
-      val originalAttributes = terminal.enterRawMode()
-      val reader = terminal.reader()
       val menuOptions = if allowCustom then options :+ "[Custom Option...]" else options
-      var selectedIndex = 0
-      var selecting = true
-
-      enum Key:
-        case Up, Down, Enter, Escape
-        case Other(code: Int)
-
-      def drawMenu(): Unit = {
-        val writer = terminal.writer()
-        writer.println(s"\u001b[32m?\u001b[0m $prompt (Use arrow/jk keys, Enter to select):")
-        menuOptions.zipWithIndex.foreach { case (option, idx) =>
-          if idx == selectedIndex then writer.println(s"  \u001b[36m> $option\u001b[0m")
-          else writer.println(s"    $option")
-        }
-        terminal.flush()
-      }
-
-      def clearMenu(): Unit = {
-        val writer = terminal.writer()
-        writer.print(s"\u001b[${menuOptions.size + 1}A\r")
-        writer.print("\u001b[0J")
-        terminal.flush()
-      }
-
-      def readKey(): Key = {
-        val c = reader.read()
-        if c == 27 then {
-          val c2 = reader.read(10)
-          if c2 == 91 then
-            reader.read(10) match {
-              case 65 => Key.Up
-              case 66 => Key.Down
-              case _  => Key.Other(c)
-            }
-          else Key.Escape
-        } else if c == 10 || c == 13 then Key.Enter
-        else if c == 'k' || c == 'K' then Key.Up
-        else if c == 'j' || c == 'J' then Key.Down
-        else if c == 3 || c == 4 then Key.Escape
-        else Key.Other(c)
-      }
-
-      try {
-        drawMenu()
-        while selecting do
-          readKey() match {
-            case Key.Up =>
-              clearMenu()
-              selectedIndex = (selectedIndex - 1 + menuOptions.size) % menuOptions.size
-              drawMenu()
-            case Key.Down =>
-              clearMenu()
-              selectedIndex = (selectedIndex + 1) % menuOptions.size
-              drawMenu()
-            case Key.Enter =>
-              selecting = false
-            case Key.Escape =>
-              selectedIndex = -1
-              selecting = false
-            case Key.Other(_) =>
-              ()
-          }
-      } finally {
-        terminal.setAttributes(originalAttributes)
-        terminal.writer().print("\r")
-        terminal.flush()
-      }
+      val selectedIndex = JLineChoiceMenu.select(terminal, prompt, options, allowCustom)
 
       if selectedIndex == -1 then ""
       else {

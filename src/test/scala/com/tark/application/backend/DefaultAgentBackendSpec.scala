@@ -124,6 +124,162 @@ class DefaultAgentBackendSpec extends FunSuite {
     assertEquals(written.get.history.map(_.toolName), List("command_executor"))
   }
 
+  test("/help emits list of available commands") {
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.unit
+    }
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.raiseError(new AssertionError("summarizer should not be invoked"))
+    }
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(1000L)
+    }
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.raiseError(new AssertionError("llm should not be invoked"))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+
+    val actions = (for {
+      backend <- DefaultAgentBackend.create[IO](session)
+      results <- executeSequentially(backend, "/help")
+      actions = results.flatMap(_._2)
+    } yield actions).unsafeRunSync()
+
+    assert(actions.exists {
+      case AgentAction.SystemMessage(msg) => msg.contains("Available commands:")
+      case _ => false
+    })
+  }
+
+  test("/memory renders memory layers status") {
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.unit
+    }
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.raiseError(new AssertionError("summarizer should not be invoked"))
+    }
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(1000L)
+    }
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.raiseError(new AssertionError("llm should not be invoked"))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+
+    val actions = (for {
+      backend <- DefaultAgentBackend.create[IO](session)
+      results <- executeSequentially(backend, "/memory")
+      actions = results.flatMap(_._2)
+    } yield actions).unsafeRunSync()
+
+    assert(actions.exists {
+      case AgentAction.SystemMessage(msg) => msg.contains("[Memory Layers Status]")
+      case _ => false
+    })
+  }
+
+  test("/clear summarizes, persists, clears session, and clears screen") {
+    var written: Option[Context] = None
+
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.delay {
+        written = Some(data)
+      }
+    }
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.pure(EpisodeSummary(sessionId, 2000L, "summarized history", List("takeaway")))
+    }
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(2000L)
+    }
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.raiseError(new AssertionError("llm should not be invoked"))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val history = List(com.tark.domain.Interaction("1", "input", "output", 1000L, "tool"))
+    val session = Session("session_1", Context(List(commandTool), Memory(), history), Path.of("target/test-session.md"))
+
+    val actions = (for {
+      backend <- DefaultAgentBackend.create[IO](session)
+      results <- executeSequentially(backend, "/clear")
+      actions = results.flatMap(_._2)
+    } yield actions).unsafeRunSync()
+
+    assert(actions.exists { case AgentAction.ClearScreen() => true; case _ => false })
+    assert(actions.exists { case AgentAction.SystemMessage(msg) if msg.contains("Session cleared.") => true; case _ => false })
+
+    val persisted = written.get
+    assert(persisted.history.isEmpty)
+    assertEquals(persisted.memory.episodic.episodes.map(_.summary), List("summarized history"))
+  }
+
+  test("/exit summarizes and exits session") {
+    var written: Option[Context] = None
+
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.delay {
+        written = Some(data)
+      }
+    }
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.pure(EpisodeSummary(sessionId, 2000L, "exited history", List.empty))
+    }
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(2000L)
+    }
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.raiseError(new AssertionError("llm should not be invoked"))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val history = List(com.tark.domain.Interaction("1", "input", "output", 1000L, "tool"))
+    val session = Session("session_1", Context(List(commandTool), Memory(), history), Path.of("target/test-session.md"))
+
+    val actions = (for {
+      backend <- DefaultAgentBackend.create[IO](session)
+      results <- executeSequentially(backend, "/exit")
+      actions = results.flatMap(_._2)
+    } yield actions).unsafeRunSync()
+
+    assert(actions.exists { case AgentAction.Exit() => true; case _ => false })
+    val persisted = written.get
+    assertEquals(persisted.history, history) // exit doesn't clear history
+    assertEquals(persisted.memory.episodic.episodes.map(_.summary), List("exited history"))
+  }
+
   test("tool conversation emits assistant and tool messages before persistence") {
     val events = ArrayBuffer.empty[String]
     var chatCalls = 0

@@ -2,6 +2,7 @@ package com.tark.bootstrap
 
 import cats.effect.*
 import com.tark.adapters.context.DefaultSessionProvider.given
+import com.tark.adapters.context.FileSessionRepository.given
 import com.tark.adapters.context.SessionProviderSettings
 import com.tark.adapters.inbound.terminal.jline.JLineFrontend
 import com.tark.adapters.tool.command.CommandTool.given
@@ -25,7 +26,7 @@ object TarkApp {
     val appResource = for {
       client <- summon[BackendProvider[IO]].getClient
       session <- summon[SessionProvider[IO]].createSession
-      completionRef <- Resource.eval(Ref.of[IO, List[String]](DefaultAgentBackend.DefaultCompletions))
+      completionRef <- Resource.eval(Ref.of[IO, List[String]](com.tark.application.backend.SlashCommandBackend.DefaultCompletions))
       terminalAndReader <- JLineFrontend.terminalAndReader(completionRef)
     } yield (client, session, completionRef, terminalAndReader)
 
