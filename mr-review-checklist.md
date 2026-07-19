@@ -40,10 +40,13 @@ A single critical resource leak was identified in the new `FileSessionRepository
   - [x] Verify that console feedback is consistently formatted and properly outputted during bootstrap.
     - *Successfully compiled and ran the unit test suites (which implicitly exercise these paths) to ensure everything behaves identically and outputs console messages purely and safely.*
 
-- [ ] **[Suggestion] Improve callback type safety in SlashCommandBackend**
-  - [ ] Investigate `emitActions` callback signature: `emitActions: (actions: AgentAction[F]) => Stream[F, AgentTask[F]]`.
-  - [ ] Generalize the callback signature to accept multiple actions (e.g., `emitActions: (actions: AgentAction[F]*) => Stream[F, AgentTask[F]]` or `Seq[AgentAction[F]]`) to match `DefaultAgentBackend`'s native implementation and allow more flexibility in the future.
-  - [ ] Verify compilation and integration with `DefaultAgentBackend` and corresponding unit tests.
+- [x] **[Suggestion] Improve callback type safety in SlashCommandBackend**
+  - [x] Investigate `emitActions` callback signature: `emitActions: (actions: AgentAction[F]) => Stream[F, AgentTask[F]]`.
+    - *Confirmed that the callback in SlashCommandBackend is restricted to a single action, which is passed to DefaultAgentBackend's varargs emitActions. Generalizing the signature to Seq[AgentAction[F]] makes the callback much more versatile and matches DefaultAgentBackend's design.*
+  - [x] Generalize the callback signature to accept multiple actions (e.g., `emitActions: (actions: AgentAction[F]*) => Stream[F, AgentTask[F]]` or `Seq[AgentAction[F]]`) to match `DefaultAgentBackend`'s native implementation and allow more flexibility in the future.
+    - *Refactored SlashCommandBackend constructor to accept Seq[AgentAction[F]] => Stream[F, AgentTask[F]] and updated internal /help and unknown command actions to be wrapped in Seq.*
+  - [x] Verify compilation and integration with `DefaultAgentBackend` and corresponding unit tests.
+    - *Successfully compiled and ran the unit test suites (with sbt "testOnly *"), proving the integration with DefaultAgentBackend and the generalized callback flow compiles and executes perfectly.*
 
 - [ ] **[Suggestion] Add dedicated unit tests for StreamingResponseHandler and ReActLoopEngine**
   - [ ] Investigate current test coverage in `DefaultAgentBackendSpec.scala`, where these extracted classes are tested implicitly.
