@@ -48,10 +48,13 @@ A single critical resource leak was identified in the new `FileSessionRepository
   - [x] Verify compilation and integration with `DefaultAgentBackend` and corresponding unit tests.
     - *Successfully compiled and ran the unit test suites (with sbt "testOnly *"), proving the integration with DefaultAgentBackend and the generalized callback flow compiles and executes perfectly.*
 
-- [ ] **[Suggestion] Add dedicated unit tests for StreamingResponseHandler and ReActLoopEngine**
-  - [ ] Investigate current test coverage in `DefaultAgentBackendSpec.scala`, where these extracted classes are tested implicitly.
-  - [ ] Create dedicated unit tests in separate spec files (`StreamingResponseHandlerSpec.scala` and `ReActLoopEngineSpec.scala`) to test their complex state transition/streaming capabilities in isolation.
-  - [ ] Verify the new spec suites pass successfully alongside existing tests.
+- [x] **[Suggestion] Add dedicated unit tests for StreamingResponseHandler and ReActLoopEngine**
+  - [x] Investigate current test coverage in `DefaultAgentBackendSpec.scala`, where these extracted classes are tested implicitly.
+    - *Discovered integration-level tests inside DefaultAgentBackendSpec.scala covering both happy-path streaming deltas and error-fallback behavior. However, direct/isolated verification was missing.*
+  - [x] Create dedicated unit tests in separate spec files (`StreamingResponseHandlerSpec.scala` and `ReActLoopEngineSpec.scala`) to test their complex state transition/streaming capabilities in isolation.
+    - *Created StreamingResponseHandlerSpec.scala and ReActLoopEngineSpec.scala. Simulated streaming event sequences for the handler, and sequential lazy task actions (using FS2 evalMap) for the engine.*
+  - [x] Verify the new spec suites pass successfully alongside existing tests.
+    - *Ran the entire test suite (sbt "testOnly *"). All 66 tests compiled, executed, and passed successfully.*
 
 ---
 
