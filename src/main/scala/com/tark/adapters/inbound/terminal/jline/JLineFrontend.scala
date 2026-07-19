@@ -121,6 +121,8 @@ final class JLineTerminalReader(lineReader: LineReader) extends TerminalReader[I
     }
 
 final class JLineTerminalWriter(terminal: Terminal, lineReader: LineReader) extends TerminalWriter[IO]:
+  def terminalWidth: Int = terminal.getWidth
+
   override def printAbove(sender: String, message: String, style: TerminalStyle): IO[Unit] =
     IO.blocking {
       val styled = new AttributedStringBuilder()
@@ -292,7 +294,8 @@ final class JLineFrontend(
   writer: TerminalWriter[IO],
   reader: TerminalReader[IO],
   spinner: Spinner[IO, SpinnerFrames],
-  exitRequested: Ref[IO, Boolean]
+  exitRequested: Ref[IO, Boolean],
+  activePanelLinesRef: Ref[IO, Vector[String]]
 )(using
   backend: AgentBackend[IO],
   scheduler: Schedulable[IO],
@@ -308,6 +311,7 @@ final class JLineFrontend(
     if cleanInput.isEmpty then IO.unit
     else
       status.clearPanel() >>
+        activePanelLinesRef.set(Vector.empty) >>
         backend.handleInput(cleanInput).evalMap { task =>
           task.description match {
             case Some(description) =>
@@ -322,10 +326,12 @@ final class JLineFrontend(
 
   private def executeActions(actions: Stream[IO, AgentAction[IO]]): IO[Unit] =
     Ref.of[IO, Option[PanelState]](None).flatMap { panelStateRef =>
+      val cols = terminalWidth
+      val width = if (cols > 0) cols - 1 else config.panelWidth
       val panelConfig = PanelConfig(
-        width = config.panelWidth,
+        width = width,
         borderStyle = BorderStyle.fromString(config.panelBorder),
-        maxLines = 5
+        maxLines = 7
       )
 
       Ref.of[IO, Boolean](false).flatMap { inlineOpen =>
@@ -371,18 +377,24 @@ final class JLineFrontend(
 
             val state = PanelState(panelConfig, Vector(s"Tool: $name", s"Cmd: $displayInput"))
             val rendered = summon[PanelRenderer[PanelState]].render(state)
-            panelStateRef.set(Some(state)) >> status.updatePanel(rendered)
+            panelStateRef.set(Some(state)) >>
+              activePanelLinesRef.set(rendered) >>
+              status.updatePanel(rendered)
 
           case AgentAction.ToolCallOutput(text) =>
             panelStateRef.get.flatMap {
               case Some(state) =>
                 val updated = state.copy(contentLines = state.contentLines :+ s"Output: $text")
                 val rendered = summon[PanelRenderer[PanelState]].render(updated)
-                panelStateRef.set(Some(updated)) >> status.updatePanel(rendered)
+                panelStateRef.set(Some(updated)) >>
+                  activePanelLinesRef.set(rendered) >>
+                  status.updatePanel(rendered)
               case None =>
                 val state = PanelState(panelConfig, Vector(s"Output: $text"))
                 val rendered = summon[PanelRenderer[PanelState]].render(state)
-                panelStateRef.set(Some(state)) >> status.updatePanel(rendered)
+                panelStateRef.set(Some(state)) >>
+                  activePanelLinesRef.set(rendered) >>
+                  status.updatePanel(rendered)
             }
 
           case AgentAction.ToolCallEnd() =>
@@ -390,8 +402,18 @@ final class JLineFrontend(
 
           case AgentAction.RequestChoice(prompt, options, allowCustom, onSelected) =>
             closeInline >> reader.readChoice(prompt, options, allowCustom).flatMap(choice => executeActions(onSelected(choice)))
-        }.compile.drain.guarantee(closeInline)
+        }.compile.drain.guarantee(closeInline >> status.clearPanel())
       }
+    }
+
+  private def terminalWidth: Int =
+    writer match {
+      case jWriter: JLineTerminalWriter =>
+        // Safely extract width if possible, or fallback
+        // We can get terminal width directly or via lineReader
+        jWriter.terminalWidth
+      case _ =>
+        config.panelWidth
     }
 
   def loop: IO[Unit] = {
@@ -401,13 +423,17 @@ final class JLineFrontend(
         writer.flush()
 
     def promptLoop: IO[Unit] =
-      reader.readLine("\u001b[32mtark>\u001b[0m ").flatMap {
-        case InputResult.Exit =>
-          IO.unit
-        case InputResult.Cancelled =>
-          writer.printSystemMessage("Action cancelled. Type /exit or press Ctrl+D to quit.", TerminalStyle.System) >> promptLoop
-        case InputResult.Line(text) =>
-          handleInput(text) >> exitRequested.get.ifM(IO.unit, promptLoop)
+      activePanelLinesRef.get.flatMap { panelLines =>
+        val prompt = if (panelLines.isEmpty) "\u001b[32mtark>\u001b[0m "
+                     else panelLines.mkString("\n") + "\n\u001b[32mtark>\u001b[0m "
+        reader.readLine(prompt).flatMap {
+          case InputResult.Exit =>
+            IO.unit
+          case InputResult.Cancelled =>
+            writer.printSystemMessage("Action cancelled. Type /exit or press Ctrl+D to quit.", TerminalStyle.System) >> promptLoop
+          case InputResult.Line(text) =>
+            handleInput(text) >> exitRequested.get.ifM(IO.unit, promptLoop)
+        }
       }
 
     initMessage >> promptLoop >> writer.printLine("\nExiting agent shell. Goodbye!") >> writer.flush()
@@ -457,6 +483,7 @@ object JLineFrontend:
     Resource.eval {
       for {
         exitRequested <- Ref.of[IO, Boolean](false)
+        activePanelLinesRef <- Ref.of[IO, Vector[String]](Vector.empty)
       } yield {
         given AgentBackend[IO] = backend
         given TerminalStatus[IO] = JLineTerminalStatus(terminal)
@@ -464,7 +491,8 @@ object JLineFrontend:
           writer = JLineTerminalWriter(terminal, lineReader),
           reader = JLineTerminalReader(lineReader),
           spinner = SimpleSpinner(0.millis, 100.millis),
-          exitRequested = exitRequested
+          exitRequested = exitRequested,
+          activePanelLinesRef = activePanelLinesRef
         )
       }
     }

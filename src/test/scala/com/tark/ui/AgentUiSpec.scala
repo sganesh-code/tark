@@ -30,9 +30,9 @@ class AgentUiSpec extends FunSuite {
     val rendered = summon[PanelRenderer[PanelState]].render(state)
 
     // With width = 20 and BorderStyle.None, innerWidth is 20.
-    // Check that each rendered line length is exactly 20.
+    // Check that each rendered line's visible length is exactly 20.
     rendered.foreach { line =>
-      assertEquals(line.length, 20)
+      assertEquals(stripAnsi(line).length, 20)
     }
 
     // It should have truncated to maxLines = 5
@@ -46,12 +46,12 @@ class AgentUiSpec extends FunSuite {
 
     // Width = 10, BorderStyle.Ascii has borders.
     // Top border: +--------+ (size 10)
-    // Left/Right: |Hello   | (size 10)
+    // Left/Right: |Hello   \u001b[0m| (size 10 visible)
     // Bottom border: +--------+ (size 10)
     assertEquals(rendered.size, 4) // Top + Hello + World + Bottom
     assertEquals(rendered(0), "+--------+")
-    assertEquals(rendered(1), "|Hello   |")
-    assertEquals(rendered(2), "|World   |")
+    assertEquals(rendered(1), "|Hello   \u001b[0m|")
+    assertEquals(rendered(2), "|World   \u001b[0m|")
     assertEquals(rendered(3), "+--------+")
   }
 
@@ -61,9 +61,9 @@ class AgentUiSpec extends FunSuite {
     val rendered = summon[PanelRenderer[PanelState]].render(state)
 
     assertEquals(rendered.size, 3)
-    assertEquals(rendered(0), "A         ")
-    assertEquals(rendered(1), "          ")
-    assertEquals(rendered(2), "B         ")
+    assertEquals(rendered(0), "A         \u001b[0m")
+    assertEquals(rendered(1), "          \u001b[0m")
+    assertEquals(rendered(2), "B         \u001b[0m")
   }
 
   test("PanelRenderer aligns borders correctly when lines contain ANSI colors") {
@@ -76,11 +76,11 @@ class AgentUiSpec extends FunSuite {
     // Inner width = 12 - 2 = 10.
     // Visible length of "\u001b[32mGreen\u001b[0m" is 5.
     // Padding should add 5 spaces.
-    // Total physical length should be: 1 (left border) + 14 (ANSI string) + 5 (spaces) + 1 (right border) = 21.
+    // Total physical length should be: 1 (left border) + 14 (ANSI string) + 5 (spaces) + 4 (reset) + 1 (right border) = 25.
     assertEquals(rendered.size, 3) // Top, Content, Bottom
     assertEquals(rendered(0), "+----------+")
-    assertEquals(rendered(1), s"|\u001b[32mGreen\u001b[0m     |")
-    assertEquals(rendered(1).length, 21)
+    assertEquals(rendered(1), s"|\u001b[32mGreen\u001b[0m     \u001b[0m|")
+    assertEquals(rendered(1).length, 25)
     assertEquals(rendered(2), "+----------+")
   }
 }

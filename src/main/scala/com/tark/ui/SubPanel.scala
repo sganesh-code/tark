@@ -65,7 +65,7 @@ object PanelRenderer:
           truncatedLines.map { line =>
             val visibleLen = stripAnsi(line).length
             val padAmount = Math.max(0, config.width - visibleLen)
-            line + (" " * padAmount)
+            line + (" " * padAmount) + "\u001b[0m"
           }
         case Some(bc) =>
           val horizontalBar = bc.horizontal.toString * innerWidth
@@ -75,7 +75,7 @@ object PanelRenderer:
             val visibleLen = stripAnsi(line).length
             val padAmount = Math.max(0, innerWidth - visibleLen)
             val padded = line + (" " * padAmount)
-            s"${bc.vertical}$padded${bc.vertical}"
+            s"${bc.vertical}$padded\u001b[0m${bc.vertical}"
           }
           topBorder +: contentRows :+ bottomBorder
 

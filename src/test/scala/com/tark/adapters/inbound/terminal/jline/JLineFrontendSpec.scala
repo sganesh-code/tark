@@ -32,6 +32,7 @@ class JLineFrontendSpec extends FunSuite {
 
     val program = for {
       exitRequested <- Ref.of[IO, Boolean](false)
+      activePanelLinesRef <- Ref.of[IO, Vector[String]](Vector.empty)
       frontend = {
         given Schedulable[IO] with {
           override def schedule(task: IO[Unit], delay: FiniteDuration, period: FiniteDuration): IO[Unit] = task
@@ -77,7 +78,7 @@ class JLineFrontendSpec extends FunSuite {
             Resource.make(IO.delay(events += s"spinner:$message").void)(_ => IO.delay(events += "spinner:clear").void)
         }
 
-        JLineFrontend(writer, reader, spinner, exitRequested)
+        JLineFrontend(writer, reader, spinner, exitRequested, activePanelLinesRef)
       }
       _ <- frontend.handleInput("hello")
       exited <- exitRequested.get
@@ -114,6 +115,7 @@ class JLineFrontendSpec extends FunSuite {
 
     val program = for {
       exitRequested <- Ref.of[IO, Boolean](false)
+      activePanelLinesRef <- Ref.of[IO, Vector[String]](Vector.empty)
       frontend = {
         given Schedulable[IO] with {
           override def schedule(task: IO[Unit], delay: FiniteDuration, period: FiniteDuration): IO[Unit] = task
@@ -156,7 +158,7 @@ class JLineFrontendSpec extends FunSuite {
             Resource.unit
         }
 
-        JLineFrontend(writer, reader, spinner, exitRequested)
+        JLineFrontend(writer, reader, spinner, exitRequested, activePanelLinesRef)
       }
       _ <- frontend.handleInput("hello")
     } yield ()
@@ -189,6 +191,7 @@ class JLineFrontendSpec extends FunSuite {
 
     val program = for {
       exitRequested <- Ref.of[IO, Boolean](false)
+      activePanelLinesRef <- Ref.of[IO, Vector[String]](Vector.empty)
       frontend = {
         given Schedulable[IO] with {
           override def schedule(task: IO[Unit], delay: FiniteDuration, period: FiniteDuration): IO[Unit] = task
@@ -229,7 +232,7 @@ class JLineFrontendSpec extends FunSuite {
           ): Resource[IO, Unit] = Resource.unit
         }
 
-        JLineFrontend(writer, reader, spinner, exitRequested)
+        JLineFrontend(writer, reader, spinner, exitRequested, activePanelLinesRef)
       }
       _ <- frontend.handleInput("run")
       _ <- frontend.handleInput("run")
@@ -240,9 +243,9 @@ class JLineFrontendSpec extends FunSuite {
     assert(events.exists(_.contains("Tool: command_executor")))
     assert(events.exists(_.contains("Cmd: echo test")))
     assert(events.exists(_.contains("output content")))
-    // It should have cleared the panel exactly twice (at the start of each handleInput call)
+    // It should have cleared the panel exactly 4 times (2 handleInput calls * 2 clears each)
     val clearCount = events.count(_ == "panel:clear")
-    assertEquals(clearCount, 2)
+    assertEquals(clearCount, 4)
   }
 
   test("JLineTerminalStatus combines active spinner, persistent status, and sub-panel lines") {
