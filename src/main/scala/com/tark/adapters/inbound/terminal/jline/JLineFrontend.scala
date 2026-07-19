@@ -422,19 +422,17 @@ final class JLineFrontend(
         writer.printLine("Type your prompt or /help. Press Ctrl+D or type /exit to close.\n") >>
         writer.flush()
 
-    def promptLoop: IO[Unit] =
-      activePanelLinesRef.get.flatMap { panelLines =>
-        val prompt = if (panelLines.isEmpty) "\u001b[32mtark>\u001b[0m "
-                     else panelLines.mkString("\n") + "\n\u001b[32mtark>\u001b[0m "
-        reader.readLine(prompt).flatMap {
-          case InputResult.Exit =>
-            IO.unit
-          case InputResult.Cancelled =>
-            writer.printSystemMessage("Action cancelled. Type /exit or press Ctrl+D to quit.", TerminalStyle.System) >> promptLoop
-          case InputResult.Line(text) =>
-            handleInput(text) >> exitRequested.get.ifM(IO.unit, promptLoop)
-        }
+    def promptLoop: IO[Unit] = {
+      val prompt = "\u001b[32mtark>\u001b[0m "
+      reader.readLine(prompt).flatMap {
+        case InputResult.Exit =>
+          IO.unit
+        case InputResult.Cancelled =>
+          writer.printSystemMessage("Action cancelled. Type /exit or press Ctrl+D to quit.", TerminalStyle.System) >> promptLoop
+        case InputResult.Line(text) =>
+          handleInput(text) >> exitRequested.get.ifM(IO.unit, promptLoop)
       }
+    }
 
     initMessage >> promptLoop >> writer.printLine("\nExiting agent shell. Goodbye!") >> writer.flush()
   }
