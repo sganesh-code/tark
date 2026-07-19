@@ -8,7 +8,8 @@ import com.tark.domain.context.{Context, Session}
 import com.tark.domain.memory.{EpisodeSummary, Memory}
 import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult}
 import com.tark.ports.AgentBackend
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient}
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser}
+import com.tark.domain.{GoalContract, AgentState}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.ports.outbound.tool.CommandExecutor
 import com.tark.ports.shared.serialization.Sink
@@ -21,6 +22,11 @@ import scala.collection.mutable.ArrayBuffer
 
 class DefaultAgentBackendSpec extends FunSuite {
   given com.tark.domain.Config = com.tark.domain.Config.default
+
+  given GoalContractParser[IO] with {
+    override def parseGoal(input: String): IO[GoalContract] =
+      IO.pure(GoalContract("Solve user request", "Deliver completed task", List.empty, List.empty, List.empty))
+  }
 
   private val commandTool =
     ToolDefinition(
@@ -62,7 +68,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val (tasks, actions) = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -112,7 +118,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val actions = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -148,7 +154,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val actions = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -184,7 +190,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val actions = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -225,7 +231,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
     val history = List(com.tark.domain.Interaction("1", "input", "output", 1000L, "tool"))
-    val session = Session("session_1", Context(List(commandTool), Memory(), history), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), history), Path.of("target/test-session.md"))
 
     val actions = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -268,7 +274,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
     val history = List(com.tark.domain.Interaction("1", "input", "output", 1000L, "tool"))
-    val session = Session("session_1", Context(List(commandTool), Memory(), history), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), history), Path.of("target/test-session.md"))
 
     val actions = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -328,7 +334,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val results = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -418,7 +424,7 @@ class DefaultAgentBackendSpec extends FunSuite {
         }
     }
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val results = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -490,7 +496,7 @@ class DefaultAgentBackendSpec extends FunSuite {
         Stream.raiseError[IO](RuntimeException("stream unsupported"))
     }
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val actions = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -532,7 +538,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
     given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
 
-    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(AgentState(goal = "Simulated Goal"))), List.empty), Path.of("target/test-session.md"))
 
     val actions = (for {
       backend <- DefaultAgentBackend.create[IO](session)
@@ -542,6 +548,65 @@ class DefaultAgentBackendSpec extends FunSuite {
 
     assert(actions.contains(AgentAction.StatusUpdate("Context Window: 10/32768 tokens (0.0%) | Total Usage: Prompt 10 | Completion 5 | Total 15")))
     assert(actions.contains(AgentAction.StatusUpdate("Context Window: 10/32768 tokens (0.0%) | Total Usage: Prompt 20 | Completion 10 | Total 30")))
+  }
+
+  test("Goal Contract Intake: runs parser, enriches state with goal contract, and emits system messages on first turn") {
+    var written: Option[Context] = None
+
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.delay {
+        written = Some(data)
+      }
+    }
+
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.raiseError(new AssertionError("summarizer should not be invoked"))
+    }
+
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(1000L)
+    }
+
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+
+    given GoalContractParser[IO] with {
+      override def parseGoal(input: String): IO[GoalContract] =
+        IO.pure(GoalContract("Write a Scala game", "Snake game", List("Console-only"), List("Runs locally"), List.empty))
+    }
+
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.pure(LLMResponse("Let's build a Console Snake game", List.empty, OpenAIUsage(10, 5, 15)))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+
+    val (tasks, actions) = (for {
+      backend <- DefaultAgentBackend.create[IO](session)
+      results <- executeSequentially(backend, "Write a Scala game")
+    } yield (results.map(_._1), results.flatMap(_._2))).unsafeRunSync()
+
+    // Assert the task flow contains both "Goal Intake Complete" and "Waiting for assistant response"
+    assertEquals(tasks, List(Some("Goal Intake Complete"), Some("Waiting for assistant response"), Some("Finalizing assistant response"), Some("Persisting session")))
+
+    // Assert system messages for intake are emitted
+    assert(actions.contains(AgentAction.SystemMessage("[Intake] Goal established: Write a Scala game")))
+    assert(actions.contains(AgentAction.SystemMessage("[Intake] Deliverable: Snake game")))
+    assert(actions.contains(AgentAction.SystemMessage("[Intake] Constraints: Console-only")))
+
+    // Assert that the context saved contains the extracted goal contract
+    val persisted = written.get
+    val working = persisted.memory.working.get
+    assertEquals(working.goal, "Write a Scala game")
+    assertEquals(working.deliverable, "Snake game")
+    assertEquals(working.constraints, List("Console-only"))
+    assertEquals(working.assumptions, List("Runs locally"))
   }
 
   private def executeSequentially(

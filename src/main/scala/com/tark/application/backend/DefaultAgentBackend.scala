@@ -20,7 +20,8 @@ final class DefaultAgentBackend[F[_]: Sync] private (
   sessionRef: Ref[F, Session],
   updateCompletionsRef: Ref[F, List[String] => F[Unit]],
   usageRef: Ref[F, OpenAIUsage],
-  reactEngine: ReActLoopEngine[F]
+  reactEngine: ReActLoopEngine[F],
+  goalContractParser: GoalContractParser[F]
 )(using
   sink: Sink[F, Context, Path],
   summarizer: EpisodicMemorySummarizer[F],
@@ -43,14 +44,41 @@ final class DefaultAgentBackend[F[_]: Sync] private (
 
   private def processPrompt(input: String): Stream[F, AgentTask[F]] =
     Stream.eval(sessionRef.get).flatMap { session =>
-      val userMessage = OpenAIMessage(role = "user", content = Some(input))
-      val initialMessages = historyMessages(session.context) :+ userMessage
+      val hasGoal = session.context.memory.working.exists(_.goal.nonEmpty)
 
-      Stream.eval(Ref.of[F, Option[ConversationResult]](None)).flatMap { resultRef =>
-        reactEngine.runConversation(session.context, initialMessages, depth = 0, Vector.empty, resultRef) ++
-          Stream.emit(persistConversationTask(session, resultRef))
+      if (hasGoal) {
+        runStandardConversation(session, input)
+      } else {
+        Stream.eval(goalContractParser.parseGoal(input)).flatMap { contract =>
+          val updatedContext = session.context.updateAgentState(_.withGoalContract(contract))
+          val updatedSession = session.copy(context = updatedContext)
+
+          val systemMessages = List(
+            s"[Intake] Goal established: ${contract.goal}",
+            s"[Intake] Deliverable: ${contract.deliverable}"
+          ) ++ Option.when(contract.constraints.nonEmpty)(s"[Intake] Constraints: ${contract.constraints.mkString(", ")}")
+
+          val notificationStream = Stream.emits(systemMessages.map(msg => AgentAction.SystemMessage[F](msg)))
+
+          val intakeTask = AgentTask(
+            description = Some("Goal Intake Complete"),
+            action = Stream.eval(sessionRef.set(updatedSession)).drain ++ notificationStream
+          )
+
+          Stream.emit(intakeTask) ++ runStandardConversation(updatedSession, input)
+        }
       }
     }
+
+  private def runStandardConversation(session: Session, input: String): Stream[F, AgentTask[F]] = {
+    val userMessage = OpenAIMessage(role = "user", content = Some(input))
+    val initialMessages = historyMessages(session.context) :+ userMessage
+
+    Stream.eval(Ref.of[F, Option[ConversationResult]](None)).flatMap { resultRef =>
+      reactEngine.runConversation(session.context, initialMessages, depth = 0, Vector.empty, resultRef) ++
+        Stream.emit(persistConversationTask(session, resultRef))
+    }
+  }
 
   private def persistConversationTask(session: Session, resultRef: Ref[F, Option[ConversationResult]]): AgentTask[F] =
     AgentTask(
@@ -105,6 +133,7 @@ object DefaultAgentBackend {
     commandExecutor: CommandExecutor[F],
     llmClient: LlmClient[F],
     streamingLlmClient: StreamingLlmClient[F],
+    goalContractParser: GoalContractParser[F],
     config: Config
   ): F[DefaultAgentBackend[F]] =
     for {
@@ -115,7 +144,7 @@ object DefaultAgentBackend {
       toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
       contextDistiller = ContextDistiller[F](llmClient)
       reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, contextDistiller, config)
-    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine)
+    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
     sink: Sink[F, Context, Path],
@@ -123,6 +152,7 @@ object DefaultAgentBackend {
     clock: Clock[F],
     commandExecutor: CommandExecutor[F],
     llmClient: LlmClient[F],
+    goalContractParser: GoalContractParser[F],
     config: Config
   ): F[DefaultAgentBackend[F]] = {
     given StreamingLlmClient[F] = StreamingLlmClient.fromBuffered(llmClient)

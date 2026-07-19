@@ -1,8 +1,8 @@
 package com.tark.bootstrap
 
 import cats.effect.{IO, Resource, Sync}
-import com.tark.adapters.backend.ollama.{OllamaEpisodicMemorySummarizer, OllamaLlmClient}
-import com.tark.ports.outbound.backend.{BackendProvider, LlmClient}
+import com.tark.adapters.backend.ollama.{OllamaEpisodicMemorySummarizer, OllamaGoalContractParser, OllamaLlmClient}
+import com.tark.ports.outbound.backend.{BackendProvider, GoalContractParser, LlmClient}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import sttp.client3.asynchttpclient.fs2.AsyncHttpClientFs2Backend
 
@@ -18,4 +18,7 @@ object OllamaRuntime {
 
   given episodicMemorySummarizer[F[_]: Sync](using client: LlmClient[F]): EpisodicMemorySummarizer[F] =
     new OllamaEpisodicMemorySummarizer[F](client)
+
+  given goalContractParser[F[_]: Sync](using client: LlmClient[F]): GoalContractParser[F] =
+    new OllamaGoalContractParser[F](client)
 }

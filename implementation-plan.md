@@ -42,7 +42,7 @@ This implementation plan breaks down the development of **Option A: Goal Contrac
     - [x] Add an integration spec `src/test/scala/com/tark/adapters/backend/ollama/OllamaGoalContractParserSpec.scala` using a Fake `LlmClient` to assert that correct messages are formulated and responses are correctly routed and parsed.
       - *Created `OllamaGoalContractParserSpec.scala` testing successful model prompts, response extraction, and fallback parsing under malformed text within an IO context.*
 
-- [ ] **🎟️ [TARK-INTAKE-003]: Integrate Goal Intake Phase into DefaultAgentBackend**
+- [x] **🎟️ [TARK-INTAKE-003]: Integrate Goal Intake Phase into DefaultAgentBackend**
   - **Description:** Wire the Goal Contract Parser into the backend input handler. On the first user message of a session, run the parser to extract the `GoalContract`, update the `AgentState` in the context's working memory, and print a system message outlining the contract before launching the ReAct loop.
   - **Scope:**
     - **In scope:**
@@ -52,12 +52,18 @@ This implementation plan breaks down the development of **Option A: Goal Contrac
     - **Out of scope:**
       - Generating a step-by-step sequential plan list (deferred to `TARK-PLAN-001`).
   - **Implementation Tasks:**
-    - [ ] Add `GoalContractParser[F]` dependency to `@src/main/scala/com/tark/application/backend/DefaultAgentBackend.scala`.
-    - [ ] Modify `DefaultAgentBackend.processPrompt` to check if the session's active `AgentState` contains a goal. If it is empty, call the parser first.
-    - [ ] Populate the `AgentState` with the parsed contract's goal, deliverable, constraints, assumptions, and known facts using the helpers in `@src/main/scala/com/tark/domain/AgentState.scala`.
-    - [ ] Emit a clean system message action in the backend task stream to inform the user (e.g., `[Intake] Active Goal: <goal>`, `[Intake] Constraints: <constraints>`).
-    - [ ] Update wiring in `@src/main/scala/com/tark/bootstrap/TarkApp.scala` and `OllamaRuntime.scala` to construct and supply the `OllamaGoalContractParser`.
-    - [ ] Update `@src/test/scala/com/tark/application/backend/DefaultAgentBackendSpec.scala` to mock/fake the parser and verify that a new session successfully extracts and stores the goal contract in context before running the conversation.
+    - [x] Add `GoalContractParser[F]` dependency to `@src/main/scala/com/tark/application/backend/DefaultAgentBackend.scala`.
+      - *Added `GoalContractParser` driving dependency via implicit resolution.*
+    - [x] Modify `DefaultAgentBackend.processPrompt` to check if the session's active `AgentState` contains a goal. If it is empty, call the parser first.
+      - *Intercepted initial inputs to execute `GoalContractParser` when no active goal is found in `AgentState`.*
+    - [x] Populate the `AgentState` with the parsed contract's goal, deliverable, constraints, assumptions, and known facts using the helpers in `@src/main/scala/com/tark/domain/AgentState.scala`.
+      - *Updated working memory state dynamically with the parsed goal contract.*
+    - [x] Emit a clean system message action in the backend task stream to inform the user (e.g., `[Intake] Active Goal: <goal>`, `[Intake] Constraints: <constraints>`).
+      - *Formulated and streamed informative system log notifications for established goals and constraints.*
+    - [x] Update wiring in `@src/main/scala/com/tark/bootstrap/TarkApp.scala` and `OllamaRuntime.scala` to construct and supply the `OllamaGoalContractParser`.
+      - *Registered `given goalContractParser` inside `OllamaRuntime.scala` to enable automatic dependency injection.*
+    - [x] Update `@src/test/scala/com/tark/application/backend/DefaultAgentBackendSpec.scala` to mock/fake the parser and verify that a new session successfully extracts and stores the goal contract in context before running the conversation.
+      - *Added a comprehensive intake integration test. Isolated all other non-intake tests by initializing them with a pre-populated goal to bypass intake cleanly.*
 
 - [ ] **🎟️ [TARK-PLAN-001]: Port & Prompt Definitions for Task Planner**
   - **Description:** Define the `TaskPlanner` outbound port and prompt system to decompose the active goal/deliverables from the `AgentState` into a sequential sequence of execution steps.
