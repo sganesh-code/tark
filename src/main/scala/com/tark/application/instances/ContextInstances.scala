@@ -13,10 +13,6 @@ object ContextInstances {
     override def getContextTools(context: Context): List[ToolDefinition] =
       context.tools
 
-    override def updateContext(context: Context, toolName: String, memoryValue: String): Context =
-      val updatedMemory = context.memory + (toolName -> memoryValue)
-      context.copy(memory = updatedMemory)
-
     override def getContextHistory(context: Context): List[Interaction] =
       context.history
 
@@ -36,6 +32,81 @@ object ContextInstances {
       context.copy(memory = f(context.memory))
   }
 
+  given Serializable[Memory, String] with {
+    override def serialize(memory: Memory): String = {
+      val sb = new java.lang.StringBuilder()
+      if (memory.isEmpty) {
+        sb.append("No memory entries.\n")
+      } else {
+        if (memory.episodic.episodes.nonEmpty) {
+          sb.append("### Episodic Memory\n")
+          memory.episodic.episodes.foreach { ep =>
+            sb.append(s"- **Session ${ep.sessionId}** (${ep.timestamp}): ${ep.summary}\n")
+            if (ep.keyTakeaways.nonEmpty) {
+              sb.append("  * Key Takeaways:\n")
+              ep.keyTakeaways.foreach(kt => sb.append(s"    - $kt\n"))
+            }
+          }
+        }
+        if (memory.procedural.skills.nonEmpty) {
+          sb.append("### Procedural Memory\n")
+          memory.procedural.skills.foreach { skill =>
+            sb.append(s"- **Skill: ${skill.name}**: ${skill.description}\n")
+            if (skill.steps.nonEmpty) {
+              skill.steps.foreach(step => sb.append(s"  * $step\n"))
+            }
+          }
+        }
+      }
+      sb.toString
+    }
+  }
+
+  given Serializable[AgentState, String] with {
+    override def serialize(state: AgentState): String = {
+      val sb = new java.lang.StringBuilder()
+      sb.append("- **Goal**: " + state.goal + "\n")
+      sb.append(s"- **Deliverable**: ${state.deliverable}\n")
+
+      sb.append("- **Constraints**:\n")
+      if (state.constraints.isEmpty) sb.append("  - None\n")
+      else state.constraints.foreach(c => sb.append(s"  - $c\n"))
+
+      sb.append("- **Assumptions**:\n")
+      if (state.assumptions.isEmpty) sb.append("  - None\n")
+      else state.assumptions.foreach(a => sb.append(s"  - $a\n"))
+
+      sb.append("- **Known Facts**:\n")
+      if (state.knownFacts.isEmpty) sb.append("  - None\n")
+      else state.knownFacts.foreach(f => sb.append(s"  - $f\n"))
+
+      sb.append("- **Open Questions**:\n")
+      if (state.openQuestions.isEmpty) sb.append("  - None\n")
+      else state.openQuestions.foreach(q => sb.append(s"  - $q\n"))
+
+      sb.append("- **Plan**:\n")
+      if (state.plan.isEmpty) sb.append("  - No steps defined\n")
+      else state.plan.zipWithIndex.foreach { case (step, idx) =>
+        val marker = if (idx == state.currentStep) "-> " else "  "
+        sb.append(s"  $marker${idx + 1}. $step\n")
+      }
+
+      sb.append("- **Completed Steps**:\n")
+      if (state.completedSteps.isEmpty) sb.append("  - None\n")
+      else state.completedSteps.foreach(step => sb.append(s"  - $step\n"))
+
+      sb.append("- **Tool Results**:\n")
+      if (state.toolResults.isEmpty) sb.append("  - None\n")
+      else state.toolResults.foreach(r => sb.append(s"  - $r\n"))
+
+      sb.append(s"- **Candidate Answer**: ${state.candidateAnswer.getOrElse("None")}\n")
+      sb.append(s"- **Confidence**: ${state.confidence}\n")
+      sb.append(s"- **Done**: ${state.done}\n")
+      sb.append(s"- **Reason for Stop**: ${state.reasonForStop.getOrElse("None")}\n")
+      sb.toString
+    }
+  }
+
   given Serializable[Context, String] with {
     override def serialize(context: Context): String = {
       val sb = new java.lang.StringBuilder()
@@ -52,76 +123,13 @@ object ContextInstances {
       sb.append("\n")
 
       sb.append("## Memory\n")
-      if (context.memory.isEmpty) {
-        sb.append("No memory entries.\n")
-      } else {
-        if (context.memory.legacy.nonEmpty) {
-          context.memory.legacy.foreach { case (key, value) =>
-            sb.append(s"- **$key**: $value\n")
-          }
-        }
-        if (context.memory.episodic.episodes.nonEmpty) {
-          sb.append("### Episodic Memory\n")
-          context.memory.episodic.episodes.foreach { ep =>
-            sb.append(s"- **Session ${ep.sessionId}** (${ep.timestamp}): ${ep.summary}\n")
-            if (ep.keyTakeaways.nonEmpty) {
-              sb.append("  * Key Takeaways:\n")
-              ep.keyTakeaways.foreach(kt => sb.append(s"    - $kt\n"))
-            }
-          }
-        }
-        if (context.memory.procedural.skills.nonEmpty) {
-          sb.append("### Procedural Memory\n")
-          context.memory.procedural.skills.foreach { skill =>
-            sb.append(s"- **Skill: ${skill.name}**: ${skill.description}\n")
-            if (skill.steps.nonEmpty) {
-              skill.steps.foreach(step => sb.append(s"  * $step\n"))
-            }
-          }
-        }
-      }
+      sb.append(summon[Serializable[Memory, String]].serialize(context.memory))
       sb.append("\n")
 
       context.agentState.foreach { state =>
         sb.append("## Agent State\n")
-        sb.append(s"- **Goal**: ${state.goal}\n")
-        sb.append(s"- **Deliverable**: ${state.deliverable}\n")
-
-        sb.append("- **Constraints**:\n")
-        if (state.constraints.isEmpty) sb.append("  - None\n")
-        else state.constraints.foreach(c => sb.append(s"  - $c\n"))
-
-        sb.append("- **Assumptions**:\n")
-        if (state.assumptions.isEmpty) sb.append("  - None\n")
-        else state.assumptions.foreach(a => sb.append(s"  - $a\n"))
-
-        sb.append("- **Known Facts**:\n")
-        if (state.knownFacts.isEmpty) sb.append("  - None\n")
-        else state.knownFacts.foreach(f => sb.append(s"  - $f\n"))
-
-        sb.append("- **Open Questions**:\n")
-        if (state.openQuestions.isEmpty) sb.append("  - None\n")
-        else state.openQuestions.foreach(q => sb.append(s"  - $q\n"))
-
-        sb.append("- **Plan**:\n")
-        if (state.plan.isEmpty) sb.append("  - No steps defined\n")
-        else state.plan.zipWithIndex.foreach { case (step, idx) =>
-          val marker = if (idx == state.currentStep) "-> " else "  "
-          sb.append(s"  $marker${idx + 1}. $step\n")
-        }
-
-        sb.append("- **Completed Steps**:\n")
-        if (state.completedSteps.isEmpty) sb.append("  - None\n")
-        else state.completedSteps.foreach(step => sb.append(s"  - $step\n"))
-
-        sb.append("- **Tool Results**:\n")
-        if (state.toolResults.isEmpty) sb.append("  - None\n")
-        else state.toolResults.foreach(r => sb.append(s"  - $r\n"))
-
-        sb.append(s"- **Candidate Answer**: ${state.candidateAnswer.getOrElse("None")}\n")
-        sb.append(s"- **Confidence**: ${state.confidence}\n")
-        sb.append(s"- **Done**: ${state.done}\n")
-        sb.append(s"- **Reason for Stop**: ${state.reasonForStop.getOrElse("None")}\n\n")
+        sb.append(summon[Serializable[AgentState, String]].serialize(state))
+        sb.append("\n")
       }
 
       sb.append("## History\n")

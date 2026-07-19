@@ -4,6 +4,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all.*
 import com.tark.adapters.sandbox.docker.{DockerSandbox, DockerSandboxLifecycle}
 import com.tark.adapters.tool.command.CommandTool
+import com.tark.domain.tool.QuestionnaireTool
 import com.tark.domain.Config
 import com.tark.domain.context.{Context, Session}
 import com.tark.domain.memory
@@ -47,7 +48,7 @@ object DefaultSessionProvider {
         
         existingMemory <- sessionRepository.loadLatestMemory(Path.of("target/sessions"))
         
-        context = Context(List(CommandTool.definition), existingMemory, List.empty, Some(sandbox))
+        context = Context(List(CommandTool.definition, QuestionnaireTool.definition), existingMemory, List.empty, Some(sandbox))
         session = Session(sessionId, context, sessionPath)
         
         _ <- sink.write(session.context, sessionPath)

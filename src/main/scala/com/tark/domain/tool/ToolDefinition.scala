@@ -18,6 +18,7 @@ case class OpenAiFunctionParamsProperties(pattern: OpenAPIFunctionParamsProperti
 enum OpenAIFunctionParams:
   case Str(`type`: String = "string", description: String)
   case Object(`type`: String = "object", properties: OpenAiFunctionParamsProperties, description: String)
+  case Custom(schema: io.circe.Json)
 
 case class OpenAIFunction(
   name: String,
@@ -87,7 +88,11 @@ object OpenAiFunctionParamsProperties {
 }
 
 object OpenAIFunctionParams {
-  given Encoder[OpenAIFunctionParams] = deriveEncoder
+  given Encoder[OpenAIFunctionParams] = Encoder.instance {
+    case Str(t, d) => Json.obj("Str" -> Json.obj("type" -> Json.fromString(t), "description" -> Json.fromString(d)))
+    case Object(t, p, d) => Json.obj("Object" -> Json.obj("type" -> Json.fromString(t), "properties" -> p.asJson, "description" -> Json.fromString(d)))
+    case Custom(schema) => schema
+  }
   given Decoder[OpenAIFunctionParams] = deriveDecoder
 }
 

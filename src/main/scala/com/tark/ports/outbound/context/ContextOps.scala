@@ -6,7 +6,6 @@ import com.tark.domain.{AgentState, Interaction}
 
 trait ContextOps[C] {
   def getContextTools(context: C): List[ToolDefinition]
-  def updateContext(context: C, toolName: String, memoryValue: String): C
   def getContextHistory(context: C): List[Interaction]
   def addInteraction(context: C, interaction: Interaction): C
   def getAgentState(context: C): Option[AgentState]

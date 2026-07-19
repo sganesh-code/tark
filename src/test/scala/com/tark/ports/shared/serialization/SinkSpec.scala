@@ -16,7 +16,7 @@ class SinkSpec extends FunSuite {
     val interaction = Interaction("id1", "ls", "file1", 123456L, "command_ls")
     val context = Context(
       tools = List(CommandTool.definition),
-      memory = Memory(legacy = Map("key1" -> "val1")),
+      memory = Memory(),
       history = List(interaction)
     )
 
@@ -25,8 +25,6 @@ class SinkSpec extends FunSuite {
 
     assert(serialized.contains("# Session Context"))
     assert(serialized.contains("command_executor"))
-    assert(serialized.contains("key1"))
-    assert(serialized.contains("val1"))
     assert(serialized.contains("Interaction 1"))
 
     val tempFile = Files.createTempFile("tark-session-test", ".md")

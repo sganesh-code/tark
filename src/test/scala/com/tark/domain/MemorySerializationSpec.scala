@@ -45,8 +45,7 @@ class MemorySerializationSpec extends FunSuite {
       working = Some(workingState),
       episodic = EpisodicMemory(List(episode)),
       procedural = ProceduralMemory(List(skill)),
-      semantic = Some(SemanticMemory(List("Fact A", "Fact B"))),
-      legacy = Map("cmd_1" -> "ls output", "cmd_2" -> "pwd output")
+      semantic = Some(SemanticMemory(List("Fact A", "Fact B")))
     )
 
     val context = Context(
@@ -84,7 +83,6 @@ class MemorySerializationSpec extends FunSuite {
     assertEquals(deserializedMemory.episodic, originalMemory.episodic)
     assertEquals(deserializedMemory.procedural, originalMemory.procedural)
     assertEquals(deserializedMemory.semantic, originalMemory.semantic)
-    assertEquals(deserializedMemory.legacy, originalMemory.legacy)
     assertEquals(deserializedMemory, originalMemory)
   }
 

@@ -172,7 +172,7 @@ final class JLineTerminalWriter(terminal: Terminal, lineReader: LineReader) exte
     IO.blocking(terminal.flush())
 
 object JLineTerminalWriter:
-  def toJLineStyle(style: TerminalStyle): AttributedStyle = {
+  private def toJLineStyle(style: TerminalStyle): AttributedStyle = {
     val base = style.foreground match {
       case TerminalColor.Default => AttributedStyle.DEFAULT
       case TerminalColor.Black   => AttributedStyle.DEFAULT.foreground(AttributedStyle.BLACK)

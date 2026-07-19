@@ -7,7 +7,7 @@ import com.tark.domain.Interaction
 import com.tark.domain.context.Context
 import com.tark.domain.tool.{OpenAIMessage, ToolCall, ToolResult}
 import com.tark.ports.outbound.backend.*
-import com.tark.ports.outbound.tool.CommandExecutor
+import com.tark.ports.outbound.tool.ToolCallExecutor
 import com.tark.ui.{AgentAction, AgentTask}
 import fs2.Stream
 
@@ -19,7 +19,7 @@ final case class ConversationResult(
 
 final class ReActLoopEngine[F[_]: Sync](
   streamingHandler: StreamingResponseHandler[F],
-  commandExecutor: CommandExecutor[F],
+  toolCallExecutor: ToolCallExecutor[F],
   clock: Clock[F]
 ) {
   import ReActLoopEngine.*
@@ -71,47 +71,58 @@ final class ReActLoopEngine[F[_]: Sync](
               Stream.emit(finalizeConversationTask(messages :+ assistantMessage, accumulatedInteractions, response, resultRef))
             else
               Stream.eval(Ref.of[F, Vector[(ToolCall, ToolResult)]](Vector.empty)).flatMap { toolResultRef =>
-                val toolTasks = response.results.map { toolCall =>
-                  AgentTask(
-                    description = Some(s"Executing tool: ${toolCall.function.name}"),
-                    action =
-                      Stream.emit(AgentAction.Log(s"Executing tool: ${toolCall.function.name}")) ++
-                        Stream
-                          .eval(executeTool(context)(toolCall).flatTap(result => toolResultRef.update(_ :+ (toolCall, result))))
-                          .map(result => AgentAction.SystemMessage(result.content))
-                  )
-                }
+                Stream.eval(
+                  response.results.traverse { toolCall =>
+                    Ref.of[F, Option[ToolResult]](None).map { resultRef =>
+                      val toolActionStream = toolCallExecutor.execute(context, toolCall, resultRef)
 
-                Stream.emits(toolTasks) ++
-                  Stream.eval(toolResultRef.get).flatMap { toolResults =>
-                    val toolMessages = toolResults.map { case (toolCall, result) =>
-                      OpenAIMessage(
-                        role = "tool",
-                        content = Some(result.content),
-                        tool_call_id = Some(toolCall.id)
-                      )
-                    }.toList
-
-                    Stream.eval(clock.realTimeMillis).flatMap { now =>
-                      val interactions = toolResults.zipWithIndex.map { case ((toolCall, result), idx) =>
-                        Interaction(
-                          id = s"interaction_${now}_$idx",
-                          input = toolCall.function.arguments,
-                          output = result.content,
-                          timestamp = now + idx,
-                          toolName = toolCall.function.name
-                        )
-                      }
-
-                      runConversation(
-                        context,
-                        messages ++ List(assistantMessage) ++ toolMessages,
-                        depth + 1,
-                        accumulatedInteractions ++ interactions,
-                        resultRef
+                      AgentTask(
+                        description = Some(s"Executing tool: ${toolCall.function.name}"),
+                        action =
+                          Stream.emit(AgentAction.Log(s"Executing tool: ${toolCall.function.name}")) ++
+                            toolActionStream ++
+                            Stream.eval(resultRef.get).flatMap {
+                              case Some(result) =>
+                                Stream.eval(toolResultRef.update(_ :+ (toolCall, result))).drain ++
+                                  Stream.emit(AgentAction.SystemMessage(result.content))
+                              case None =>
+                                Stream.empty
+                            }
                       )
                     }
                   }
+                ).flatMap { toolTasks =>
+                  Stream.emits(toolTasks) ++
+                    Stream.eval(toolResultRef.get).flatMap { toolResults =>
+                      val toolMessages = toolResults.map { case (toolCall, result) =>
+                        OpenAIMessage(
+                          role = "tool",
+                          content = Some(result.content),
+                          tool_call_id = Some(toolCall.id)
+                        )
+                      }.toList
+
+                      Stream.eval(clock.realTimeMillis).flatMap { now =>
+                        val interactions = toolResults.zipWithIndex.map { case ((toolCall, result), idx) =>
+                          Interaction(
+                            id = s"interaction_${now}_$idx",
+                            input = toolCall.function.arguments,
+                            output = result.content,
+                            timestamp = now + idx,
+                            toolName = toolCall.function.name
+                          )
+                        }
+
+                        runConversation(
+                          context,
+                          messages ++ List(assistantMessage) ++ toolMessages,
+                          depth + 1,
+                          accumulatedInteractions ++ interactions,
+                          resultRef
+                        )
+                      }
+                    }
+                }
               }
           }
       }
@@ -146,10 +157,6 @@ final class ReActLoopEngine[F[_]: Sync](
           }
         }.drain
     )
-
-  private def executeTool(context: Context)(toolCall: ToolCall): F[ToolResult] =
-    if toolCall.function.name == "command_executor" then commandExecutor.execute(context, toolCall)
-    else Sync[F].pure(ToolResult(s"Tool '${toolCall.function.name}' is not available."))
 
   private def originalUserInput(messages: List[OpenAIMessage]): String =
     messages.find(_.role == "user").flatMap(_.content).getOrElse("")

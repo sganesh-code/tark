@@ -15,7 +15,6 @@ class MemorySpec extends FunSuite {
     assertEquals(memory.episodic.episodes, List.empty)
     assertEquals(memory.procedural.skills, List.empty)
     assertEquals(memory.semantic, None)
-    assertEquals(memory.legacy, Map.empty)
     assert(memory.isEmpty)
   }
 
@@ -46,16 +45,6 @@ class MemorySpec extends FunSuite {
     assertEquals(updated.procedural.skills.length, 1)
     assertEquals(updated.procedural.skills.head.name, "FileSearch")
     assertEquals(updated.procedural.skills.head.steps, List("find .", "grep pattern"))
-  }
-
-  test("Memory: supports legacy Map-style operations") {
-    val memory = Memory()
-    val updated = memory + ("key1" -> "val1") + ("key2" -> "val2")
-
-    assertEquals(updated.get("key1"), Some("val1"))
-    assertEquals(updated.get("key2"), Some("val2"))
-    assertEquals(updated.get("missing"), None)
-    assertEquals(updated.legacy, Map("key1" -> "val1", "key2" -> "val2"))
   }
 
   test("ContextOps: getMemory and updateMemory perform pure updates") {

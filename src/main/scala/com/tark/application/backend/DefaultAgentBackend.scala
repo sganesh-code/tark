@@ -9,7 +9,7 @@ import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolResult}
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.*
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
-import com.tark.ports.outbound.tool.CommandExecutor
+import com.tark.ports.outbound.tool.{CommandExecutor, DefaultToolCallExecutor, ToolCallExecutor}
 import com.tark.ports.shared.serialization.Sink
 import com.tark.ui.{AgentAction, AgentTask}
 import fs2.Stream
@@ -113,7 +113,8 @@ object DefaultAgentBackend {
       updateRef <- Ref.of[F, List[String] => F[Unit]](_ => Sync[F].unit)
       usageRef <- Ref.of[F, OpenAIUsage](OpenAIUsage(0, 0, 0))
       streamingHandler = StreamingResponseHandler[F](streamingLlmClient, llmClient, usageRef)
-      reactEngine = ReActLoopEngine[F](streamingHandler, commandExecutor, clock)
+      toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
+      reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock)
     } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
