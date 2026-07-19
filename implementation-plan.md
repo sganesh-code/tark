@@ -28,7 +28,7 @@ This implementation plan breaks down the development of **Option A: Goal Contrac
     - [x] Add unit tests in `src/test/scala/com/tark/ports/outbound/backend/GoalContractPromptSpec.scala` testing JSON parsing success and fallback resilience.
       - *Created and verified `GoalContractPromptSpec.scala` containing exhaustive test scenarios.*
 
-- [ ] **🎟️ [TARK-INTAKE-002]: Concrete Ollama Adapter for Goal Contract Parser**
+- [x] **🎟️ [TARK-INTAKE-002]: Concrete Ollama Adapter for Goal Contract Parser**
   - **Description:** Create the concrete adapter `OllamaGoalContractParser` that uses the standard LLM client to request and parse the goal contract from Ollama.
   - **Scope:**
     - **In scope:**
@@ -37,8 +37,10 @@ This implementation plan breaks down the development of **Option A: Goal Contrac
     - **Out of scope:**
       - Integrating into `DefaultAgentBackend`.
   - **Implementation Tasks:**
-    - [ ] Implement the adapter `OllamaGoalContractParser` in `src/main/scala/com/tark/adapters/backend/ollama/OllamaGoalContractParser.scala` injecting `@src/main/scala/com/tark/ports/outbound/backend/LlmClient.scala`.
-    - [ ] Add an integration spec `src/test/scala/com/tark/adapters/backend/ollama/OllamaGoalContractParserSpec.scala` using a Fake `LlmClient` to assert that correct messages are formulated and responses are correctly routed and parsed.
+    - [x] Implement the adapter `OllamaGoalContractParser` in `src/main/scala/com/tark/adapters/backend/ollama/OllamaGoalContractParser.scala` injecting `@src/main/scala/com/tark/ports/outbound/backend/LlmClient.scala`.
+      - *Implemented the concrete `OllamaGoalContractParser` adapter utilizing the generic `LlmClient` and resolving the `Deserializable` typeclass via given imports.*
+    - [x] Add an integration spec `src/test/scala/com/tark/adapters/backend/ollama/OllamaGoalContractParserSpec.scala` using a Fake `LlmClient` to assert that correct messages are formulated and responses are correctly routed and parsed.
+      - *Created `OllamaGoalContractParserSpec.scala` testing successful model prompts, response extraction, and fallback parsing under malformed text within an IO context.*
 
 - [ ] **🎟️ [TARK-INTAKE-003]: Integrate Goal Intake Phase into DefaultAgentBackend**
   - **Description:** Wire the Goal Contract Parser into the backend input handler. On the first user message of a session, run the parser to extract the `GoalContract`, update the `AgentState` in the context's working memory, and print a system message outlining the contract before launching the ReAct loop.
