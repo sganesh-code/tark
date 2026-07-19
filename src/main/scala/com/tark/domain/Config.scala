@@ -12,7 +12,7 @@ case class Config(
                  panelBorder: String = "rounded",
                  contextWindowSize: Int = 32768,
                  enableDistillation: Boolean = true,
-                 distillationThreshold: Int = 1000
+                 distillationThreshold: Int = 8000
                  )
 
 object Config {
@@ -22,7 +22,7 @@ object Config {
   val DefaultSandboxImageName = "tark-sandbox:latest"
   val DefaultContextWindowSize = 32768
   val DefaultEnableDistillation = true
-  val DefaultDistillationThreshold = 1000
+  val DefaultDistillationThreshold = 8000
 
   val default: Config = Config(
     modelId = DefaultModelId,

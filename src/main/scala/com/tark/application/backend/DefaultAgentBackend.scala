@@ -112,12 +112,28 @@ final class DefaultAgentBackend[F[_]: Sync] private (
       }
     }
 
+  private def shouldDistill(input: String, output: String): Boolean = {
+    val lowerIn = input.toLowerCase
+    // Do not distill if we are explicitly reading files or viewing source code
+    !lowerIn.contains("cat ") && 
+    !lowerIn.contains("less ") && 
+    !lowerIn.contains("more ") && 
+    !lowerIn.contains("tail ") && 
+    !lowerIn.contains("head ") && 
+    !lowerIn.contains("grep ") && 
+    !lowerIn.contains("find ")
+  }
+
   private def updateContextAfterConversation(context: Context, result: ConversationResult): F[Context] = {
     val currentAgentState = context.memory.working.getOrElse(AgentState())
 
     val distilledMessagesF = result.messages.traverse { msg =>
-      if (msg.role == "tool" && config.enableDistillation && msg.content.exists(_.length > config.distillationThreshold)) {
-        val toolCall = ToolCall(msg.tool_call_id.getOrElse(""), "function", ToolCallFunction("unknown", ""))
+      // Find matching tool call in assistant messages to check original command arguments
+      val associatedToolCall = result.messages.flatMap(_.tool_calls.getOrElse(Nil)).find(_.id == msg.tool_call_id.getOrElse(""))
+      val inputArgs = associatedToolCall.map(_.function.arguments).getOrElse("")
+
+      if (msg.role == "tool" && config.enableDistillation && msg.content.exists(_.length > config.distillationThreshold) && shouldDistill(inputArgs, msg.content.getOrElse(""))) {
+        val toolCall = associatedToolCall.getOrElse(ToolCall(msg.tool_call_id.getOrElse(""), "function", ToolCallFunction("unknown", "")))
         contextDistiller.distill(context, toolCall, msg.content.get).map { distilled =>
           msg.copy(content = Some(distilled))
         }
@@ -127,8 +143,8 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     }
 
     val distilledInteractionsF = result.interactions.traverse { interaction =>
-      if (config.enableDistillation && interaction.output.length > config.distillationThreshold) {
-        val toolCall = ToolCall(interaction.id, "function", ToolCallFunction(interaction.toolName, ""))
+      if (config.enableDistillation && interaction.output.length > config.distillationThreshold && shouldDistill(interaction.input, interaction.output)) {
+        val toolCall = ToolCall(interaction.id, "function", ToolCallFunction(interaction.toolName, interaction.input))
         contextDistiller.distill(context, toolCall, interaction.output).map { distilled =>
           interaction.copy(output = distilled)
         }
