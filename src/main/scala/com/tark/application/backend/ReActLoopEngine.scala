@@ -79,7 +79,7 @@ final class ReActLoopEngine[F[_]: Sync](
                       AgentTask(
                         description = None,
                         action =
-                          Stream.emit(AgentAction.ToolCallStart(toolCall.function.name)) ++
+                          Stream.emit(AgentAction.ToolCallStart(toolCall.function.name, toolCall.function.arguments)) ++
                             toolActionStream ++
                             Stream.eval(resultRef.get).flatMap {
                               case Some(result) =>

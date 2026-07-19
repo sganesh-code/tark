@@ -179,7 +179,7 @@ class JLineFrontendSpec extends FunSuite {
           AgentTask(
             None,
             Stream(
-              AgentAction.ToolCallStart("test_tool"),
+              AgentAction.ToolCallStart("command_executor", """{"command":"echo test"}"""),
               AgentAction.ToolCallOutput("output content"),
               AgentAction.ToolCallEnd()
             )
@@ -232,13 +232,17 @@ class JLineFrontendSpec extends FunSuite {
         JLineFrontend(writer, reader, spinner, exitRequested)
       }
       _ <- frontend.handleInput("run")
+      _ <- frontend.handleInput("run")
     } yield ()
 
     program.unsafeRunSync()
 
-    assert(events.exists(_.contains("Executing tool: test_tool")))
+    assert(events.exists(_.contains("Tool: command_executor")))
+    assert(events.exists(_.contains("Cmd: echo test")))
     assert(events.exists(_.contains("output content")))
-    assert(events.contains("panel:clear"))
+    // It should have cleared the panel exactly twice (at the start of each handleInput call)
+    val clearCount = events.count(_ == "panel:clear")
+    assertEquals(clearCount, 2)
   }
 
   test("JLineTerminalStatus combines active spinner, persistent status, and sub-panel lines") {

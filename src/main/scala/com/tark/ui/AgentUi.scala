@@ -13,7 +13,7 @@ object AgentAction:
   final case class ClearScreen[F[_]]() extends AgentAction[F]
   final case class Exit[F[_]]() extends AgentAction[F]
   final case class StatusUpdate[F[_]](text: String) extends AgentAction[F]
-  final case class ToolCallStart[F[_]](toolName: String) extends AgentAction[F]
+  final case class ToolCallStart[F[_]](toolName: String, arguments: String) extends AgentAction[F]
   final case class ToolCallOutput[F[_]](text: String) extends AgentAction[F]
   final case class ToolCallEnd[F[_]]() extends AgentAction[F]
   final case class RequestChoice[F[_]](

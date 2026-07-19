@@ -307,23 +307,25 @@ final class JLineFrontend(
     val cleanInput = input.trim
     if cleanInput.isEmpty then IO.unit
     else
-      backend.handleInput(cleanInput).evalMap { task =>
-        task.description match {
-          case Some(description) =>
-            spinner.create(frames, description).use(_ => executeActions(task.action))
-          case None =>
-            executeActions(task.action)
+      status.clearPanel() >>
+        backend.handleInput(cleanInput).evalMap { task =>
+          task.description match {
+            case Some(description) =>
+              spinner.create(frames, description).use(_ => executeActions(task.action))
+            case None =>
+              executeActions(task.action)
+          }
+        }.compile.drain.handleErrorWith { error =>
+          writer.printAbove("System", s"Error: ${error.getMessage}", TerminalStyle.Error)
         }
-      }.compile.drain.handleErrorWith { error =>
-        writer.printAbove("System", s"Error: ${error.getMessage}", TerminalStyle.Error)
-      }
   }
 
   private def executeActions(actions: Stream[IO, AgentAction[IO]]): IO[Unit] =
     Ref.of[IO, Option[PanelState]](None).flatMap { panelStateRef =>
       val panelConfig = PanelConfig(
         width = config.panelWidth,
-        borderStyle = BorderStyle.fromString(config.panelBorder)
+        borderStyle = BorderStyle.fromString(config.panelBorder),
+        maxLines = 5
       )
 
       Ref.of[IO, Boolean](false).flatMap { inlineOpen =>
@@ -358,29 +360,37 @@ final class JLineFrontend(
           case AgentAction.StatusUpdate(text) =>
             status.updatePersistent(text)
 
-          case AgentAction.ToolCallStart(name) =>
-            val state = PanelState(panelConfig, Vector(s"Executing tool: $name"))
+          case AgentAction.ToolCallStart(name, args) =>
+            val displayInput = if name == "command_executor" then
+              val commandPattern = """.*"command"\s*:\s*"([^"]*)".*""".r
+              args match {
+                case commandPattern(cmd) => cmd
+                case _ => args
+              }
+            else args
+
+            val state = PanelState(panelConfig, Vector(s"Tool: $name", s"Cmd: $displayInput"))
             val rendered = summon[PanelRenderer[PanelState]].render(state)
             panelStateRef.set(Some(state)) >> status.updatePanel(rendered)
 
           case AgentAction.ToolCallOutput(text) =>
             panelStateRef.get.flatMap {
               case Some(state) =>
-                val updated = state.copy(contentLines = state.contentLines :+ text)
+                val updated = state.copy(contentLines = state.contentLines :+ s"Output: $text")
                 val rendered = summon[PanelRenderer[PanelState]].render(updated)
                 panelStateRef.set(Some(updated)) >> status.updatePanel(rendered)
               case None =>
-                val state = PanelState(panelConfig, Vector(text))
+                val state = PanelState(panelConfig, Vector(s"Output: $text"))
                 val rendered = summon[PanelRenderer[PanelState]].render(state)
                 panelStateRef.set(Some(state)) >> status.updatePanel(rendered)
             }
 
           case AgentAction.ToolCallEnd() =>
-            panelStateRef.set(None) >> status.clearPanel()
+            IO.unit
 
           case AgentAction.RequestChoice(prompt, options, allowCustom, onSelected) =>
             closeInline >> reader.readChoice(prompt, options, allowCustom).flatMap(choice => executeActions(onSelected(choice)))
-        }.compile.drain.guarantee(closeInline >> status.clearPanel() >> panelStateRef.set(None))
+        }.compile.drain.guarantee(closeInline)
       }
     }
 
