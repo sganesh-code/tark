@@ -21,7 +21,8 @@ object RuntimeConfig {
       panelBorder = env.getOrElse("TARK_PANEL_BORDER", "rounded"),
       contextWindowSize = env.get("TARK_CONTEXT_WINDOW_SIZE").flatMap(_.toIntOption).getOrElse(Config.DefaultContextWindowSize),
       enableDistillation = env.get("TARK_ENABLE_DISTILLATION").flatMap(_.toBooleanOption).getOrElse(Config.DefaultEnableDistillation),
-      distillationThreshold = env.get("TARK_DISTILLATION_THRESHOLD").flatMap(_.toIntOption).getOrElse(Config.DefaultDistillationThreshold)
+      distillationThreshold = env.get("TARK_DISTILLATION_THRESHOLD").flatMap(_.toIntOption).getOrElse(Config.DefaultDistillationThreshold),
+      frontendType = env.getOrElse("TARK_FRONTEND", Config.DefaultFrontendType)
     )
 
     RuntimeConfig(

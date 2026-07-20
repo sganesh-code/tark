@@ -12,7 +12,8 @@ case class Config(
                  panelBorder: String = "rounded",
                  contextWindowSize: Int = 32768,
                  enableDistillation: Boolean = true,
-                 distillationThreshold: Int = 8000
+                 distillationThreshold: Int = 8000,
+                 frontendType: String = "jline"
                  )
 
 object Config {
@@ -23,6 +24,7 @@ object Config {
   val DefaultContextWindowSize = 32768
   val DefaultEnableDistillation = true
   val DefaultDistillationThreshold = 8000
+  val DefaultFrontendType = "jline"
 
   val default: Config = Config(
     modelId = DefaultModelId,
@@ -33,7 +35,8 @@ object Config {
     panelBorder = "rounded",
     contextWindowSize = DefaultContextWindowSize,
     enableDistillation = DefaultEnableDistillation,
-    distillationThreshold = DefaultDistillationThreshold
+    distillationThreshold = DefaultDistillationThreshold,
+    frontendType = DefaultFrontendType
   )
 
   given Encoder[Config] = deriveEncoder
