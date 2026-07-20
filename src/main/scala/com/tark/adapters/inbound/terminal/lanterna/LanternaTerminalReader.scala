@@ -43,8 +43,10 @@ final class LanternaTerminalReader(
           if (key == null) {
             IO.sleep(10.millis).flatMap(_ => loop(input, cursor))
           } else {
-            key.getKeyType match {
-              case KeyType.PageUp =>
+            if (key.isCtrlDown) {
+              val c = key.getCharacter
+              if (c == 'u' || c == 'U') {
+                // Scroll Up with Ctrl+U
                 stateRef.get.flatMap { s =>
                   val size = screen.getTerminalSize
                   val splitCol = (size.getColumns * 0.65).toInt
@@ -55,80 +57,101 @@ final class LanternaTerminalReader(
                   val nextScroll = math.min(s.scrollOffset + 5, maxScroll)
                   stateRef.update(_.copy(scrollOffset = nextScroll)) >> redraw >> loop(input, cursor)
                 }
-
-              case KeyType.PageDown =>
+              } else if (c == 'b' || c == 'B') {
+                // Scroll Down with Ctrl+B
                 stateRef.get.flatMap { s =>
                   val nextScroll = math.max(0, s.scrollOffset - 5)
                   stateRef.update(_.copy(scrollOffset = nextScroll)) >> redraw >> loop(input, cursor)
                 }
-
-              case KeyType.Character =>
-                val c = key.getCharacter.toString
-                val updatedInput = input.take(cursor) + c + input.drop(cursor)
-                val updatedCursor = cursor + 1
-                updateInputState(updatedInput, updatedCursor) >> loop(updatedInput, updatedCursor)
-
-              case KeyType.Backspace =>
-                if (cursor > 0) {
-                  val updatedInput = input.take(cursor - 1) + input.drop(cursor)
-                  val updatedCursor = cursor - 1
-                  updateInputState(updatedInput, updatedCursor) >> loop(updatedInput, updatedCursor)
-                } else {
-                  loop(input, cursor)
-                }
-
-              case KeyType.ArrowLeft =>
-                if (cursor > 0) {
-                  val updatedCursor = cursor - 1
-                  updateInputState(input, updatedCursor) >> loop(input, updatedCursor)
-                } else {
-                  loop(input, cursor)
-                }
-
-              case KeyType.ArrowRight =>
-                if (cursor < input.length) {
-                  val updatedCursor = cursor + 1
-                  updateInputState(input, updatedCursor) >> loop(input, updatedCursor)
-                } else {
-                  loop(input, cursor)
-                }
-
-              case KeyType.Enter =>
-                IO.pure(InputResult.Line(input))
-
-              case KeyType.EOF =>
-                IO.pure(InputResult.Exit)
-
-              case KeyType.Escape =>
+              } else if (c == 'c' || c == 'C') {
                 IO.pure(InputResult.Cancelled)
+              } else if (c == 'd' || c == 'D') {
+                IO.pure(InputResult.Exit)
+              } else {
+                loop(input, cursor)
+              }
+            } else {
+              key.getKeyType match {
+                case KeyType.PageUp =>
+                  stateRef.get.flatMap { s =>
+                    val size = screen.getTerminalSize
+                    val splitCol = (size.getColumns * 0.65).toInt
+                    val logWidth = splitCol - 2
+                    val maxLogRows = size.getRows - 3
+                    val wrappedLogLinesSize = s.scrollback.flatMap(l => LanternaTuiRenderer.wrapLine(l, logWidth)).size
+                    val maxScroll = math.max(0, wrappedLogLinesSize - maxLogRows)
+                    val nextScroll = math.min(s.scrollOffset + 5, maxScroll)
+                    stateRef.update(_.copy(scrollOffset = nextScroll)) >> redraw >> loop(input, cursor)
+                  }
 
-              case KeyType.Tab =>
-                completionsRef.get.flatMap { completions =>
-                  val wordStart = input.lastIndexOf(' ') + 1
-                  val prefix = input.substring(wordStart)
-                  if (prefix.nonEmpty) {
-                    val matches = completions.filter(_.startsWith(prefix))
-                    if (matches.nonEmpty) {
-                      val completedWord = matches.head
-                      val updatedInput = input.take(wordStart) + completedWord
-                      val updatedCursor = updatedInput.length
-                      updateInputState(updatedInput, updatedCursor) >> loop(updatedInput, updatedCursor)
-                    } else {
-                      loop(input, cursor)
-                    }
+                case KeyType.PageDown =>
+                  stateRef.get.flatMap { s =>
+                    val nextScroll = math.max(0, s.scrollOffset - 5)
+                    stateRef.update(_.copy(scrollOffset = nextScroll)) >> redraw >> loop(input, cursor)
+                  }
+
+                case KeyType.Character =>
+                  val c = key.getCharacter.toString
+                  val updatedInput = input.take(cursor) + c + input.drop(cursor)
+                  val updatedCursor = cursor + 1
+                  updateInputState(updatedInput, updatedCursor) >> loop(updatedInput, updatedCursor)
+
+                case KeyType.Backspace =>
+                  if (cursor > 0) {
+                    val updatedInput = input.take(cursor - 1) + input.drop(cursor)
+                    val updatedCursor = cursor - 1
+                    updateInputState(updatedInput, updatedCursor) >> loop(updatedInput, updatedCursor)
                   } else {
                     loop(input, cursor)
                   }
-                }
 
-              case _ =>
-                if (key.isCtrlDown && key.getCharacter == 'c') {
-                  IO.pure(InputResult.Cancelled)
-                } else if (key.isCtrlDown && key.getCharacter == 'd') {
+                case KeyType.ArrowLeft =>
+                  if (cursor > 0) {
+                    val updatedCursor = cursor - 1
+                    updateInputState(input, updatedCursor) >> loop(input, updatedCursor)
+                  } else {
+                    loop(input, cursor)
+                  }
+
+                case KeyType.ArrowRight =>
+                  if (cursor < input.length) {
+                    val updatedCursor = cursor + 1
+                    updateInputState(input, updatedCursor) >> loop(input, updatedCursor)
+                  } else {
+                    loop(input, cursor)
+                  }
+
+                case KeyType.Enter =>
+                  IO.pure(InputResult.Line(input))
+
+                case KeyType.EOF =>
                   IO.pure(InputResult.Exit)
-                } else {
+
+                case KeyType.Escape =>
+                  IO.pure(InputResult.Cancelled)
+
+                case KeyType.Tab =>
+                  completionsRef.get.flatMap { completions =>
+                    val wordStart = input.lastIndexOf(' ') + 1
+                    val prefix = input.substring(wordStart)
+                    if (prefix.nonEmpty) {
+                      val matches = completions.filter(_.startsWith(prefix))
+                      if (matches.nonEmpty) {
+                        val completedWord = matches.head
+                        val updatedInput = input.take(wordStart) + completedWord
+                        val updatedCursor = updatedInput.length
+                        updateInputState(updatedInput, updatedCursor) >> loop(updatedInput, updatedCursor)
+                      } else {
+                        loop(input, cursor)
+                      }
+                    } else {
+                      loop(input, cursor)
+                    }
+                  }
+
+                case _ =>
                   loop(input, cursor)
-                }
+              }
             }
           }
         }

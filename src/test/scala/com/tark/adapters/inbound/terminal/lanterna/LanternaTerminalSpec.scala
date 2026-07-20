@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import com.googlecode.lanterna.TerminalSize
 import com.googlecode.lanterna.screen.TerminalScreen
 import com.googlecode.lanterna.terminal.virtual.VirtualTerminal
-import com.tark.ui.TerminalStyle
+import com.tark.ui.*
 import munit.FunSuite
 
 class LanternaTerminalSpec extends FunSuite {
@@ -116,5 +116,35 @@ class LanternaTerminalSpec extends FunSuite {
     
     val size = screen.getTerminalSize
     assertEquals(size.getColumns, 80)
+  }
+
+  test("LanternaTerminalReader maps Ctrl+U and Ctrl+B shortcuts correctly") {
+    import com.googlecode.lanterna.input.{KeyStroke, KeyType}
+    import com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal
+    val terminal = new DefaultVirtualTerminal(new TerminalSize(80, 24))
+    val screen = new TerminalScreen(terminal)
+    screen.startScreen()
+
+    val program = for {
+      stateRef <- Ref.of[IO, TuiState](TuiState(scrollback = Vector(LanternaLogLine(None, "Line 1", TerminalStyle.Default))))
+      completionsRef <- Ref.of[IO, List[String]](List.empty)
+      reader = LanternaTerminalReader(screen, stateRef, completionsRef)
+      
+      _ <- IO.blocking {
+        val ctrlU = new KeyStroke('u', false, false, true) // character 'u', ctrl = true
+        terminal.addInput(ctrlU)
+      }
+      _ <- IO.blocking {
+        val enter = new KeyStroke(KeyType.Enter)
+        terminal.addInput(enter)
+      }
+      
+      result <- reader.readLine("tark> ")
+      state <- stateRef.get
+    } yield (result, state)
+
+    val (result, state) = program.unsafeRunSync()
+    assert(result.isInstanceOf[InputResult.Line])
+    assertEquals(state.scrollOffset, 0)
   }
 }
