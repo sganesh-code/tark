@@ -80,8 +80,29 @@ object LanternaTuiRenderer {
     tg.setForegroundColor(TextColor.ANSI.GREEN)
     tg.putString(0, height - 1, state.activePrompt)
     
-    tg.setForegroundColor(TextColor.ANSI.DEFAULT)
-    tg.putString(state.activePrompt.length, height - 1, state.activeInput)
+    val inputStartCol = state.activePrompt.length
+    if (state.activeInput.startsWith("/")) {
+      val firstSpace = state.activeInput.indexOf(' ')
+      if (firstSpace == -1) {
+        tg.setForegroundColor(TextColor.ANSI.YELLOW)
+        tg.enableModifiers(com.googlecode.lanterna.SGR.BOLD)
+        tg.putString(inputStartCol, height - 1, state.activeInput)
+        tg.clearModifiers()
+      } else {
+        val cmd = state.activeInput.take(firstSpace)
+        val args = state.activeInput.drop(firstSpace)
+        tg.setForegroundColor(TextColor.ANSI.YELLOW)
+        tg.enableModifiers(com.googlecode.lanterna.SGR.BOLD)
+        tg.putString(inputStartCol, height - 1, cmd)
+        tg.clearModifiers()
+        
+        tg.setForegroundColor(TextColor.ANSI.DEFAULT)
+        tg.putString(inputStartCol + firstSpace, height - 1, args)
+      }
+    } else {
+      tg.setForegroundColor(TextColor.ANSI.DEFAULT)
+      tg.putString(inputStartCol, height - 1, state.activeInput)
+    }
 
     // Set cursor position on the input line
     val cursorCol = state.activePrompt.length + state.cursorPosition

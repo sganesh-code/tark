@@ -31,10 +31,16 @@ final class LanternaTerminalReader(
     )) >> redraw
 
     def loop(input: String, cursor: Int): IO[InputResult] = {
-      IO.blocking(screen.readInput()).flatMap { key =>
-        if (key == null) {
-          IO.sleep(10.millis).flatMap(_ => loop(input, cursor))
-        } else {
+      IO.blocking {
+        val newSize = screen.doResizeIfNecessary()
+        val key = screen.readInput()
+        (newSize, key)
+      }.flatMap { case (newSize, key) =>
+        val checkResize = if (newSize != null) redraw else IO.unit
+        checkResize >> {
+          if (key == null) {
+            IO.sleep(10.millis).flatMap(_ => loop(input, cursor))
+          } else {
           key.getKeyType match {
             case KeyType.Character =>
               val c = key.getCharacter.toString
@@ -104,6 +110,7 @@ final class LanternaTerminalReader(
                 loop(input, cursor)
               }
           }
+          }
         }
       }
     }
@@ -128,10 +135,16 @@ final class LanternaTerminalReader(
     }
 
     def loop(selectedIdx: Int): IO[Int] = {
-      IO.blocking(screen.readInput()).flatMap { key =>
-        if (key == null) {
-          IO.sleep(10.millis).flatMap(_ => loop(selectedIdx))
-        } else {
+      IO.blocking {
+        val newSize = screen.doResizeIfNecessary()
+        val key = screen.readInput()
+        (newSize, key)
+      }.flatMap { case (newSize, key) =>
+        val checkResize = if (newSize != null) updateMenu(selectedIdx) else IO.unit
+        checkResize >> {
+          if (key == null) {
+            IO.sleep(10.millis).flatMap(_ => loop(selectedIdx))
+          } else {
           key.getKeyType match {
             case KeyType.ArrowUp =>
               val nextIdx = (selectedIdx - 1 + menuOptions.size) % menuOptions.size
@@ -163,6 +176,7 @@ final class LanternaTerminalReader(
 
             case _ =>
               loop(selectedIdx)
+          }
           }
         }
       }
