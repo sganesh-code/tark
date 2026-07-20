@@ -10,7 +10,7 @@ import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, 
 import com.tark.domain.Interaction
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser, TaskPlanner, PlanVerifier, ProgressTracker}
-import com.tark.domain.{GoalContract, AgentState}
+import com.tark.domain.{GoalContract, AgentState, ProgressContext}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.ports.outbound.tool.CommandExecutor
 import com.tark.ports.shared.serialization.Sink
@@ -40,7 +40,7 @@ class DefaultAgentBackendSpec extends FunSuite {
   }
 
   given ProgressTracker[IO] with {
-    override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] =
+    override def evaluateProgress(context: ProgressContext): IO[Boolean] =
       IO.pure(false) // default to false so other tests bypass progression checks
   }
 
@@ -606,7 +606,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
 
     given ProgressTracker[IO] with {
-      override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] =
+      override def evaluateProgress(context: ProgressContext): IO[Boolean] =
         IO.pure(false)
     }
 
@@ -690,7 +690,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
 
     given ProgressTracker[IO] with {
-      override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] =
+      override def evaluateProgress(context: ProgressContext): IO[Boolean] =
         IO.pure(false)
     }
 
@@ -830,8 +830,9 @@ class DefaultAgentBackendSpec extends FunSuite {
 
     // Mock progress tracker returns TRUE to confirm completion of the active step
     given ProgressTracker[IO] with {
-      override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] = {
-        assertEquals(activeStep, "Step 1: Research")
+      override def evaluateProgress(context: ProgressContext): IO[Boolean] = {
+        assertEquals(context.activeStep, "Step 1: Research")
+        assertEquals(context.goal, "Write a parser")
         IO.pure(true)
       }
     }

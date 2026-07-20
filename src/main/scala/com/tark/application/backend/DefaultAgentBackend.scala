@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import com.tark.application.time.Clock
 import com.tark.domain.context.{Context, Session}
 import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolCallFunction}
-import com.tark.domain.{AgentState, Config, GoalContract}
+import com.tark.domain.{AgentState, Config, GoalContract, ProgressContext}
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.*
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
@@ -156,7 +156,8 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     val activeStepOpt = currentAgentState.plan.lift(currentAgentState.currentStep)
     val progressionF = activeStepOpt match {
       case Some(activeStep) =>
-        progressTracker.evaluateProgress(currentAgentState.goal, activeStep, result.messages).flatMap { completed =>
+        val progressCtx = ProgressContext(currentAgentState.goal, activeStep, result.messages)
+        progressTracker.evaluateProgress(progressCtx).flatMap { completed =>
           if (completed) {
             val nextStep = currentAgentState.currentStep + 1
             val updatedCompleted = currentAgentState.completedSteps :+ activeStep

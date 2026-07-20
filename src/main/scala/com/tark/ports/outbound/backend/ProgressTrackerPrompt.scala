@@ -1,6 +1,6 @@
 package com.tark.ports.outbound.backend
 
-import com.tark.domain.tool.OpenAIMessage
+import com.tark.domain.ProgressContext
 import com.tark.ports.shared.serialization.Deserializable
 
 object ProgressTrackerPrompt {
@@ -23,13 +23,13 @@ object ProgressTrackerPrompt {
       |""".stripMargin
   }
 
-  def userPrompt(goal: String, activeStep: String, conversation: List[OpenAIMessage]): String = {
-    val convStr = conversation.flatMap { msg =>
+  def userPrompt(context: ProgressContext): String = {
+    val convStr = context.conversation.flatMap { msg =>
       msg.content.map(content => s"[${msg.role}] $content")
     }.mkString("\n\n")
 
-    s"""Goal: $goal
-       |Active Step to evaluate: $activeStep
+    s"""Goal: ${context.goal}
+       |Active Step to evaluate: ${context.activeStep}
        |
        |Turn Conversation History:
        |$convStr

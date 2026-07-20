@@ -2,6 +2,7 @@ package com.tark.adapters.backend.ollama
 
 import cats.effect.Sync
 import cats.syntax.all.*
+import com.tark.domain.ProgressContext
 import com.tark.ports.outbound.backend.{LlmClient, Prompt, ProgressTracker, ProgressTrackerPrompt}
 import com.tark.domain.tool.OpenAIMessage
 import com.tark.ports.shared.serialization.Deserializable
@@ -12,9 +13,9 @@ import com.tark.ports.shared.serialization.Deserializable
  */
 class OllamaProgressTracker[F[_]: Sync](client: LlmClient[F]) extends ProgressTracker[F] {
 
-  override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): F[Boolean] = {
+  override def evaluateProgress(context: ProgressContext): F[Boolean] = {
     val systemPrompt = ProgressTrackerPrompt.systemInstructions
-    val userPrompt = ProgressTrackerPrompt.userPrompt(goal, activeStep, conversation)
+    val userPrompt = ProgressTrackerPrompt.userPrompt(context)
     val F = summon[Sync[F]]
 
     val prompt = Prompt(
