@@ -444,6 +444,7 @@ object JLineFrontend:
       def loop: IO[Unit] =
         task.handleErrorWith(error => IO.println(s"Spinner update failed: ${error.getMessage}")) >>
           IO.sleep(period) >>
+          IO.cede >>
           loop
 
       IO.sleep(delay) >> loop
