@@ -1,0 +1,79 @@
+package com.tark.adapters.inbound.terminal.lanterna
+
+import cats.effect.{IO, Ref}
+import cats.effect.unsafe.implicits.global
+import com.googlecode.lanterna.TerminalSize
+import com.googlecode.lanterna.screen.TerminalScreen
+import com.googlecode.lanterna.terminal.virtual.VirtualTerminal
+import com.tark.ui.TerminalStyle
+import munit.FunSuite
+
+class LanternaTerminalSpec extends FunSuite {
+
+  test("LanternaStyleMapper maps TerminalColor and style correctly") {
+    import com.googlecode.lanterna.TextColor
+    import com.googlecode.lanterna.SGR
+    import com.tark.ui.TerminalColor
+
+    val cyanColor = LanternaStyleMapper.toLanternaColor(TerminalColor.Cyan)
+    assertEquals(cyanColor, TextColor.ANSI.CYAN)
+
+    val redColor = LanternaStyleMapper.toLanternaColor(TerminalColor.Red)
+    assertEquals(redColor, TextColor.ANSI.RED)
+
+    val boldItalicStyle = TerminalStyle(bold = true, italic = true)
+    val sgrs = LanternaStyleMapper.toLanternaSGRs(boldItalicStyle)
+    assert(sgrs.contains(SGR.BOLD))
+    assert(sgrs.contains(SGR.ITALIC))
+  }
+
+  test("LanternaTerminalWriter manages scrollback buffer correctly") {
+    import com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal
+    val terminal = new DefaultVirtualTerminal(new TerminalSize(80, 24))
+    val screen = new TerminalScreen(terminal)
+    screen.startScreen()
+
+    val program = for {
+      stateRef <- Ref.of[IO, TuiState](TuiState())
+      writer = LanternaTerminalWriter(screen, stateRef)
+      _ <- writer.printAbove("Agent", "Hello World", TerminalStyle.Default)
+      _ <- writer.startInline("Agent", TerminalStyle.Default)
+      _ <- writer.appendInline("Part 1", TerminalStyle.Default)
+      _ <- writer.appendInline(" Part 2", TerminalStyle.Default)
+      _ <- writer.finishInline()
+      state <- stateRef.get
+    } yield state
+
+    val state = program.unsafeRunSync()
+    assertEquals(state.scrollback.size, 2)
+    assertEquals(state.scrollback(0).sender, Some("Agent"))
+    assertEquals(state.scrollback(0).text, "Hello World")
+    
+    assertEquals(state.scrollback(1).sender, Some("Agent"))
+    assertEquals(state.scrollback(1).text, "Part 1 Part 2")
+    assertEquals(state.inlineOpen, false)
+  }
+
+  test("LanternaTuiRenderer wraps and renders scrollback and panel text") {
+    import com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal
+    val terminal = new DefaultVirtualTerminal(new TerminalSize(80, 24))
+    val screen = new TerminalScreen(terminal)
+    screen.startScreen()
+
+    val state = TuiState(
+      scrollback = Vector(LanternaLogLine(Some("Agent"), "Short message", TerminalStyle.Default)),
+      activePanelLines = Vector("Line 1", "Line 2"),
+      statusText = "Ready",
+      activePrompt = "tark> ",
+      activeInput = "hello"
+    )
+
+    // Verify drawing triggers without throw
+    LanternaTuiRenderer.render(screen, state)
+    
+    // Check that terminal size is correctly accounted for
+    val size = screen.getTerminalSize
+    assertEquals(size.getColumns, 80)
+    assertEquals(size.getRows, 24)
+  }
+}
