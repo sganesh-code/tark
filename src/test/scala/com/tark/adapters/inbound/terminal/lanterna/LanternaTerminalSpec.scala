@@ -76,4 +76,23 @@ class LanternaTerminalSpec extends FunSuite {
     assertEquals(size.getColumns, 80)
     assertEquals(size.getRows, 24)
   }
+
+  test("LanternaTerminalStatus updates persistent status and panel lines") {
+    import com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal
+    val terminal = new DefaultVirtualTerminal(new TerminalSize(80, 24))
+    val screen = new TerminalScreen(terminal)
+    screen.startScreen()
+
+    val program = for {
+      stateRef <- Ref.of[IO, TuiState](TuiState())
+      status = LanternaTerminalStatus(screen, stateRef)
+      _ <- status.updatePersistent("Working on goal...")
+      _ <- status.updatePanel(Vector("Sub-step 1", "Sub-step 2"))
+      state <- stateRef.get
+    } yield state
+
+    val state = program.unsafeRunSync()
+    assertEquals(state.statusText, "Working on goal...")
+    assertEquals(state.activePanelLines, Vector("Sub-step 1", "Sub-step 2"))
+  }
 }

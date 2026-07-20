@@ -7,7 +7,7 @@ import com.googlecode.lanterna.screen.Screen
 import com.tark.ui.{TerminalStyle, TerminalColor}
 
 object LanternaTuiRenderer {
-  def render(screen: Screen, state: TuiState): Unit = {
+  def render(screen: Screen, state: TuiState): Unit = screen.synchronized {
     screen.clear()
     val size = screen.getTerminalSize
     val width = size.getColumns
