@@ -71,26 +71,28 @@ object LanternaTuiRenderer {
 
     // 4. Draw Status Bar
     val spinnerPart = if (state.spinnerFrame.nonEmpty) s"${state.spinnerFrame} " else ""
-    val statusText = state.statusText
+    val statusText = stripAnsi(state.statusText)
     val combinedStatus = s"$spinnerPart$statusText"
     tg.setForegroundColor(TextColor.ANSI.YELLOW)
     tg.putString(0, height - 2, combinedStatus)
 
     // 5. Draw Active Prompt
+    val cleanPrompt = stripAnsi(state.activePrompt)
     tg.setForegroundColor(TextColor.ANSI.GREEN)
-    tg.putString(0, height - 1, state.activePrompt)
+    tg.putString(0, height - 1, cleanPrompt)
     
-    val inputStartCol = state.activePrompt.length
-    if (state.activeInput.startsWith("/")) {
-      val firstSpace = state.activeInput.indexOf(' ')
+    val cleanInput = stripAnsi(state.activeInput)
+    val inputStartCol = cleanPrompt.length
+    if (cleanInput.startsWith("/")) {
+      val firstSpace = cleanInput.indexOf(' ')
       if (firstSpace == -1) {
         tg.setForegroundColor(TextColor.ANSI.YELLOW)
         tg.enableModifiers(com.googlecode.lanterna.SGR.BOLD)
-        tg.putString(inputStartCol, height - 1, state.activeInput)
+        tg.putString(inputStartCol, height - 1, cleanInput)
         tg.clearModifiers()
       } else {
-        val cmd = state.activeInput.take(firstSpace)
-        val args = state.activeInput.drop(firstSpace)
+        val cmd = cleanInput.take(firstSpace)
+        val args = cleanInput.drop(firstSpace)
         tg.setForegroundColor(TextColor.ANSI.YELLOW)
         tg.enableModifiers(com.googlecode.lanterna.SGR.BOLD)
         tg.putString(inputStartCol, height - 1, cmd)
@@ -101,15 +103,18 @@ object LanternaTuiRenderer {
       }
     } else {
       tg.setForegroundColor(TextColor.ANSI.DEFAULT)
-      tg.putString(inputStartCol, height - 1, state.activeInput)
+      tg.putString(inputStartCol, height - 1, cleanInput)
     }
 
     // Set cursor position on the input line
-    val cursorCol = state.activePrompt.length + state.cursorPosition
+    val cursorCol = cleanPrompt.length + state.cursorPosition
     screen.setCursorPosition(new TerminalPosition(cursorCol, height - 1))
 
     screen.refresh()
   }
+
+  private def stripAnsi(s: String): String =
+    s.replaceAll("\\u001b\\[[;\\d]*[ -/]*[@-~]", "")
 
   private def wrapLine(line: LanternaLogLine, width: Int): Vector[String] = {
     val prefix = line.sender.map(s => s"[$s] ").getOrElse("")
@@ -118,9 +123,10 @@ object LanternaTuiRenderer {
   }
 
   private def wrapText(text: String, width: Int): Vector[String] = {
-    if (width <= 0) Vector(text)
+    val cleanText = stripAnsi(text)
+    if (width <= 0) Vector(cleanText)
     else {
-      val paragraphs = text.split("\n", -1).toVector
+      val paragraphs = cleanText.split("\n", -1).toVector
       paragraphs.flatMap { p =>
         if (p.isEmpty) Vector("")
         else {
