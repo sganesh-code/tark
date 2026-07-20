@@ -3,7 +3,7 @@ package com.tark.adapters.inbound.terminal.lanterna
 import cats.effect.{IO, Ref}
 import com.googlecode.lanterna.input.{KeyStroke, KeyType}
 import com.googlecode.lanterna.screen.Screen
-import com.tark.ui.{InputResult, TerminalReader}
+import com.tark.ui.*
 import scala.concurrent.duration.*
 
 final class LanternaTerminalReader(
@@ -172,10 +172,20 @@ final class LanternaTerminalReader(
     val menuOptions = if (allowCustom) options :+ "[Custom Option...]" else options
 
     def updateMenu(selectedIdx: Int): IO[Unit] = {
-      val menuLines = Vector(s"? $prompt", "Use Arrow Keys/JK to navigate, Enter to select:") ++ menuOptions.zipWithIndex.map { case (opt, idx) =>
-        if (idx == selectedIdx) s"  > $opt" else s"    $opt"
-      }
-      stateRef.update(_.copy(activePanelLines = menuLines)) >> redraw
+      val headerLines = Vector(
+        LanternaLogLine(None, "╭──────────────────────────────────────────────────╮", TerminalStyle(com.tark.ui.TerminalColor.Yellow, bold = true)),
+        LanternaLogLine(None, s"│  ? $prompt", TerminalStyle(com.tark.ui.TerminalColor.Yellow, bold = true)),
+        LanternaLogLine(None, "│  Use Arrow Keys/JK to navigate, Enter to select: │", TerminalStyle(com.tark.ui.TerminalColor.Default, italic = true)),
+        LanternaLogLine(None, "╰──────────────────────────────────────────────────╯", TerminalStyle(com.tark.ui.TerminalColor.Yellow, bold = true))
+      )
+      val optionLines = menuOptions.zipWithIndex.map { case (opt, idx) =>
+        if (idx == selectedIdx) {
+          LanternaLogLine(None, s"  ▶ ◦  $opt", TerminalStyle(com.tark.ui.TerminalColor.Cyan, bold = true))
+        } else {
+          LanternaLogLine(None, s"    ◦  $opt", TerminalStyle(com.tark.ui.TerminalColor.Default))
+        }
+      }.toVector
+      stateRef.update(_.copy(activeMenuLines = headerLines ++ optionLines)) >> redraw
     }
 
     def loop(selectedIdx: Int): IO[Int] = {
@@ -227,7 +237,7 @@ final class LanternaTerminalReader(
     }
 
     updateMenu(0) >> loop(0).flatMap { selectedIdx =>
-      stateRef.update(_.copy(activePanelLines = Vector.empty)) >> redraw >> {
+      stateRef.update(_.copy(activeMenuLines = Vector.empty)) >> redraw >> {
         if (selectedIdx == -1) {
           IO.pure("")
         } else {

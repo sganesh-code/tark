@@ -40,16 +40,22 @@ object LanternaTuiRenderer {
     // Joint character
     tg.putString(splitCol, mainAreaHeight - 1, "┴")
 
-    // 2. Wrap and Draw Log Scrollback (Left Pane) with scrollOffset support
+    // 2. Wrap and Draw Log Scrollback (Left Pane) with scrollOffset and activeMenu support
     val wrappedLogLines = state.scrollback.flatMap { logLine =>
       wrapLine(logLine, logWidth).map(text => (text, logLine.style))
     }
 
+    val wrappedMenuLines = state.activeMenuLines.flatMap { menuLine =>
+      wrapLine(menuLine, logWidth).map(text => (text, menuLine.style))
+    }
+
+    val totalLeftLines = wrappedLogLines ++ wrappedMenuLines
+
     val maxLogRows = mainAreaHeight - 1
-    val maxScroll = math.max(0, wrappedLogLines.size - maxLogRows)
+    val maxScroll = math.max(0, totalLeftLines.size - maxLogRows)
     val currentScroll = math.min(state.scrollOffset, maxScroll)
     val sliceStart = maxScroll - currentScroll
-    val logToDraw = wrappedLogLines.slice(sliceStart, sliceStart + maxLogRows)
+    val logToDraw = totalLeftLines.slice(sliceStart, sliceStart + maxLogRows)
 
     for (idx <- 0 until maxLogRows) {
       val row = idx

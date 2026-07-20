@@ -13,5 +13,6 @@ case class TuiState(
   activeInput: String = "",
   cursorPosition: Int = 0,
   inlineOpen: Boolean = false,
-  scrollOffset: Int = 0
+  scrollOffset: Int = 0,
+  activeMenuLines: Vector[LanternaLogLine] = Vector.empty
 )
