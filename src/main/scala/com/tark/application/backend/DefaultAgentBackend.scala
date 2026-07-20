@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import com.tark.application.time.Clock
 import com.tark.domain.context.{Context, Session}
 import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolCallFunction}
-import com.tark.domain.{AgentState, Config}
+import com.tark.domain.{AgentState, Config, GoalContract}
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.*
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
@@ -22,6 +22,7 @@ final class DefaultAgentBackend[F[_]: Sync] private (
   usageRef: Ref[F, OpenAIUsage],
   reactEngine: ReActLoopEngine[F],
   goalContractParser: GoalContractParser[F],
+  taskPlanner: TaskPlanner[F, GoalContract],
   contextDistiller: ContextDistiller[F],
   config: Config
 )(using
@@ -52,22 +53,30 @@ final class DefaultAgentBackend[F[_]: Sync] private (
         runStandardConversation(session, input)
       } else {
         Stream.eval(goalContractParser.parseGoal(input)).flatMap { contract =>
-          val updatedContext = session.context.updateAgentState(_.withGoalContract(contract))
-          val updatedSession = session.copy(context = updatedContext)
+          Stream.eval(taskPlanner.generatePlan(contract)).flatMap { plan =>
+            val updatedContext = session.context.updateAgentState(state =>
+              state.withGoalContract(contract).withPlan(plan).copy(currentStep = 0)
+            )
+            val updatedSession = session.copy(context = updatedContext)
 
-          val systemMessages = List(
-            s"[Intake] Goal established: ${contract.goal}",
-            s"[Intake] Deliverable: ${contract.deliverable}"
-          ) ++ Option.when(contract.constraints.nonEmpty)(s"[Intake] Constraints: ${contract.constraints.mkString(", ")}")
+            val contractMessages = List(
+              s"[Intake] Goal established: ${contract.goal}",
+              s"[Intake] Deliverable: ${contract.deliverable}"
+            ) ++ Option.when(contract.constraints.nonEmpty)(s"[Intake] Constraints: ${contract.constraints.mkString(", ")}")
 
-          val notificationStream = Stream.emits(systemMessages.map(msg => AgentAction.SystemMessage[F](msg)))
+            val planMessages = if (plan.nonEmpty) {
+              s"[Intake] Generated Plan:" :: plan.map(step => s"  * $step")
+            } else Nil
 
-          val intakeTask = AgentTask(
-            description = Some("Goal Intake Complete"),
-            action = Stream.eval(sessionRef.set(updatedSession)).drain ++ notificationStream
-          )
+            val notificationStream = Stream.emits((contractMessages ++ planMessages).map(msg => AgentAction.SystemMessage[F](msg)))
 
-          Stream.emit(intakeTask) ++ runStandardConversation(updatedSession, input)
+            val intakeTask = AgentTask(
+              description = Some("Goal Intake Complete"),
+              action = Stream.eval(sessionRef.set(updatedSession)).drain ++ notificationStream
+            )
+
+            Stream.emit(intakeTask) ++ runStandardConversation(updatedSession, input)
+          }
         }
       }
     }
@@ -179,6 +188,7 @@ object DefaultAgentBackend {
     llmClient: LlmClient[F],
     streamingLlmClient: StreamingLlmClient[F],
     goalContractParser: GoalContractParser[F],
+    taskPlanner: TaskPlanner[F, GoalContract],
     config: Config
   ): F[DefaultAgentBackend[F]] =
     for {
@@ -189,7 +199,7 @@ object DefaultAgentBackend {
       toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
       contextDistiller = ContextDistiller[F](llmClient)
       reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, config)
-    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, contextDistiller, config)
+    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, taskPlanner, contextDistiller, config)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
     sink: Sink[F, Context, Path],
@@ -198,6 +208,7 @@ object DefaultAgentBackend {
     commandExecutor: CommandExecutor[F],
     llmClient: LlmClient[F],
     goalContractParser: GoalContractParser[F],
+    taskPlanner: TaskPlanner[F, GoalContract],
     config: Config
   ): F[DefaultAgentBackend[F]] = {
     given StreamingLlmClient[F] = StreamingLlmClient.fromBuffered(llmClient)

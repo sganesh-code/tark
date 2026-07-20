@@ -1,5 +1,6 @@
 package com.tark.ports.outbound.backend
 
+import com.tark.domain.GoalContract
 import com.tark.ports.shared.serialization.Deserializable
 import io.circe.parser.*
 
@@ -21,10 +22,10 @@ object TaskPlannerPrompt {
       |""".stripMargin
   }
 
-  def userPrompt(goal: String, deliverable: String, constraints: List[String]): String = {
-    val constraintsStr = if (constraints.nonEmpty) constraints.map(c => s"- $c").mkString("\n") else "(None)"
-    s"""Goal: $goal
-       |Deliverable: $deliverable
+  def userPrompt(contract: GoalContract): String = {
+    val constraintsStr = if (contract.constraints.nonEmpty) contract.constraints.map(c => s"- $c").mkString("\n") else "(None)"
+    s"""Goal: ${contract.goal}
+       |Deliverable: ${contract.deliverable}
        |Constraints:
        |$constraintsStr
        |

@@ -9,7 +9,7 @@ import com.tark.domain.memory.{EpisodeSummary, Memory}
 import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult, OpenAIMessage}
 import com.tark.domain.Interaction
 import com.tark.ports.AgentBackend
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser}
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser, TaskPlanner}
 import com.tark.domain.{GoalContract, AgentState}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.ports.outbound.tool.CommandExecutor
@@ -27,6 +27,11 @@ class DefaultAgentBackendSpec extends FunSuite {
   given GoalContractParser[IO] with {
     override def parseGoal(input: String): IO[GoalContract] =
       IO.pure(GoalContract("Solve user request", "Deliver completed task", List.empty, List.empty, List.empty))
+  }
+
+  given TaskPlanner[IO, GoalContract] with {
+    override def generatePlan(contract: GoalContract): IO[List[String]] =
+      IO.pure(List.empty[String])
   }
 
   private val commandTool =
@@ -551,7 +556,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     assert(actions.contains(AgentAction.StatusUpdate("Context Window: 10/32768 tokens (0.0%) | Total Usage: Prompt 20 | Completion 10 | Total 30")))
   }
 
-  test("Goal Contract Intake: runs parser, enriches state with goal contract, and emits system messages on first turn") {
+  test("Goal Contract Intake: runs parser, enriches state with goal contract, generates a plan, and emits system messages on first turn") {
     var written: Option[Context] = None
 
     given Sink[IO, Context, Path] with {
@@ -580,6 +585,11 @@ class DefaultAgentBackendSpec extends FunSuite {
         IO.pure(GoalContract("Write a Scala game", "Snake game", List("Console-only"), List("Runs locally"), List.empty))
     }
 
+    given TaskPlanner[IO, GoalContract] with {
+      override def generatePlan(contract: GoalContract): IO[List[String]] =
+        IO.pure(List("1. Research architecture", "2. Implement canvas", "3. Run tests"))
+    }
+
     given LlmClient[IO] with {
       override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
         IO.pure(LLMResponse("Let's build a Console Snake game", List.empty, OpenAIUsage(10, 5, 15)))
@@ -600,14 +610,20 @@ class DefaultAgentBackendSpec extends FunSuite {
     assert(actions.contains(AgentAction.SystemMessage("[Intake] Goal established: Write a Scala game")))
     assert(actions.contains(AgentAction.SystemMessage("[Intake] Deliverable: Snake game")))
     assert(actions.contains(AgentAction.SystemMessage("[Intake] Constraints: Console-only")))
+    assert(actions.contains(AgentAction.SystemMessage("[Intake] Generated Plan:")))
+    assert(actions.contains(AgentAction.SystemMessage("  * 1. Research architecture")))
+    assert(actions.contains(AgentAction.SystemMessage("  * 2. Implement canvas")))
+    assert(actions.contains(AgentAction.SystemMessage("  * 3. Run tests")))
 
-    // Assert that the context saved contains the extracted goal contract
+    // Assert that the context saved contains the extracted goal contract and the generated plan
     val persisted = written.get
     val working = persisted.memory.working.get
     assertEquals(working.goal, "Write a Scala game")
     assertEquals(working.deliverable, "Snake game")
     assertEquals(working.constraints, List("Console-only"))
     assertEquals(working.assumptions, List("Runs locally"))
+    assertEquals(working.plan, List("1. Research architecture", "2. Implement canvas", "3. Run tests"))
+    assertEquals(working.currentStep, 0)
   }
 
   test("Context Distillation: distills tool output during session persistence if threshold exceeded") {
