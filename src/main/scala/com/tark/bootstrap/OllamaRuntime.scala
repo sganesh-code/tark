@@ -1,8 +1,8 @@
 package com.tark.bootstrap
 
 import cats.effect.{IO, Resource, Sync}
-import com.tark.adapters.backend.ollama.{OllamaEpisodicMemorySummarizer, OllamaGoalContractParser, OllamaLlmClient, OllamaTaskPlanner}
-import com.tark.ports.outbound.backend.{BackendProvider, GoalContractParser, LlmClient, TaskPlanner}
+import com.tark.adapters.backend.ollama.{OllamaEpisodicMemorySummarizer, OllamaGoalContractParser, OllamaLlmClient, OllamaTaskPlanner, OllamaPlanVerifier}
+import com.tark.ports.outbound.backend.{BackendProvider, GoalContractParser, LlmClient, TaskPlanner, PlanVerifier}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.domain.GoalContract
 import sttp.client3.asynchttpclient.fs2.AsyncHttpClientFs2Backend
@@ -25,4 +25,7 @@ object OllamaRuntime {
 
   given taskPlanner[F[_]: Sync](using client: LlmClient[F]): TaskPlanner[F, GoalContract] =
     new OllamaTaskPlanner[F](client)
+
+  given planVerifier[F[_]: Sync](using client: LlmClient[F]): PlanVerifier[F] =
+    new OllamaPlanVerifier[F](client)
 }

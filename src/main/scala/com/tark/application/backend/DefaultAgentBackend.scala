@@ -23,6 +23,7 @@ final class DefaultAgentBackend[F[_]: Sync] private (
   reactEngine: ReActLoopEngine[F],
   goalContractParser: GoalContractParser[F],
   taskPlanner: TaskPlanner[F, GoalContract],
+  planVerifier: PlanVerifier[F],
   contextDistiller: ContextDistiller[F],
   config: Config
 )(using
@@ -54,28 +55,41 @@ final class DefaultAgentBackend[F[_]: Sync] private (
       } else {
         Stream.eval(goalContractParser.parseGoal(input)).flatMap { contract =>
           Stream.eval(taskPlanner.generatePlan(contract)).flatMap { plan =>
-            val updatedContext = session.context.updateAgentState(state =>
-              state.withGoalContract(contract).withPlan(plan).copy(currentStep = 0)
-            )
-            val updatedSession = session.copy(context = updatedContext)
+            Stream.eval(planVerifier.verifyPlan(contract, plan)).flatMap { isValid =>
+              val planWorkflowStream = if (isValid) {
+                Stream.emit((plan, List.empty[String]))
+              } else {
+                // If invalid, invoke the planner again for a self-refined plan
+                Stream.eval(taskPlanner.generatePlan(contract)).map { refined =>
+                  (refined, List(s"[Intake] [WARNING] Plan failed verification. Executed plan-refinement pass."))
+                }
+              }
 
-            val contractMessages = List(
-              s"[Intake] Goal established: ${contract.goal}",
-              s"[Intake] Deliverable: ${contract.deliverable}"
-            ) ++ Option.when(contract.constraints.nonEmpty)(s"[Intake] Constraints: ${contract.constraints.mkString(", ")}")
+              planWorkflowStream.flatMap { case (finalPlan, warnings) =>
+                val updatedContext = session.context.updateAgentState(state =>
+                  state.withGoalContract(contract).withPlan(finalPlan).copy(currentStep = 0)
+                )
+                val updatedSession = session.copy(context = updatedContext)
 
-            val planMessages = if (plan.nonEmpty) {
-              s"[Intake] Generated Plan:" :: plan.map(step => s"  * $step")
-            } else Nil
+                val contractMessages = List(
+                  s"[Intake] Goal established: ${contract.goal}",
+                  s"[Intake] Deliverable: ${contract.deliverable}"
+                ) ++ Option.when(contract.constraints.nonEmpty)(s"[Intake] Constraints: ${contract.constraints.mkString(", ")}")
 
-            val notificationStream = Stream.emits((contractMessages ++ planMessages).map(msg => AgentAction.SystemMessage[F](msg)))
+                val planMessages = if (finalPlan.nonEmpty) {
+                  s"[Intake] Generated Plan:" :: finalPlan.map(step => s"  * $step")
+                } else Nil
 
-            val intakeTask = AgentTask(
-              description = Some("Goal Intake Complete"),
-              action = Stream.eval(sessionRef.set(updatedSession)).drain ++ notificationStream
-            )
+                val notificationStream = Stream.emits((contractMessages ++ warnings ++ planMessages).map(msg => AgentAction.SystemMessage[F](msg)))
 
-            Stream.emit(intakeTask) ++ runStandardConversation(updatedSession, input)
+                val intakeTask = AgentTask(
+                  description = Some("Goal Intake Complete"),
+                  action = Stream.eval(sessionRef.set(updatedSession)).drain ++ notificationStream
+                )
+
+                Stream.emit(intakeTask) ++ runStandardConversation(updatedSession, input)
+              }
+            }
           }
         }
       }
@@ -189,6 +203,7 @@ object DefaultAgentBackend {
     streamingLlmClient: StreamingLlmClient[F],
     goalContractParser: GoalContractParser[F],
     taskPlanner: TaskPlanner[F, GoalContract],
+    planVerifier: PlanVerifier[F],
     config: Config
   ): F[DefaultAgentBackend[F]] =
     for {
@@ -199,7 +214,7 @@ object DefaultAgentBackend {
       toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
       contextDistiller = ContextDistiller[F](llmClient)
       reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, config)
-    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, taskPlanner, contextDistiller, config)
+    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, taskPlanner, planVerifier, contextDistiller, config)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
     sink: Sink[F, Context, Path],
@@ -209,6 +224,7 @@ object DefaultAgentBackend {
     llmClient: LlmClient[F],
     goalContractParser: GoalContractParser[F],
     taskPlanner: TaskPlanner[F, GoalContract],
+    planVerifier: PlanVerifier[F],
     config: Config
   ): F[DefaultAgentBackend[F]] = {
     given StreamingLlmClient[F] = StreamingLlmClient.fromBuffered(llmClient)

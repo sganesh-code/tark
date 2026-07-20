@@ -9,7 +9,7 @@ import com.tark.domain.memory.{EpisodeSummary, Memory}
 import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult, OpenAIMessage}
 import com.tark.domain.Interaction
 import com.tark.ports.AgentBackend
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser, TaskPlanner}
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser, TaskPlanner, PlanVerifier}
 import com.tark.domain.{GoalContract, AgentState}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.ports.outbound.tool.CommandExecutor
@@ -32,6 +32,11 @@ class DefaultAgentBackendSpec extends FunSuite {
   given TaskPlanner[IO, GoalContract] with {
     override def generatePlan(contract: GoalContract): IO[List[String]] =
       IO.pure(List.empty[String])
+  }
+
+  given PlanVerifier[IO] with {
+    override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
+      IO.pure(true)
   }
 
   private val commandTool =
@@ -590,6 +595,11 @@ class DefaultAgentBackendSpec extends FunSuite {
         IO.pure(List("1. Research architecture", "2. Implement canvas", "3. Run tests"))
     }
 
+    given PlanVerifier[IO] with {
+      override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
+        IO.pure(true)
+    }
+
     given LlmClient[IO] with {
       override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
         IO.pure(LLMResponse("Let's build a Console Snake game", List.empty, OpenAIUsage(10, 5, 15)))
@@ -624,6 +634,77 @@ class DefaultAgentBackendSpec extends FunSuite {
     assertEquals(working.assumptions, List("Runs locally"))
     assertEquals(working.plan, List("1. Research architecture", "2. Implement canvas", "3. Run tests"))
     assertEquals(working.currentStep, 0)
+  }
+
+  test("Goal Contract Intake: executes plan-refinement pass on verification failure") {
+    var written: Option[Context] = None
+
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.delay {
+        written = Some(data)
+      }
+    }
+
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.raiseError(new AssertionError("summarizer should not be invoked"))
+    }
+
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(1000L)
+    }
+
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+
+    given GoalContractParser[IO] with {
+      override def parseGoal(input: String): IO[GoalContract] =
+        IO.pure(GoalContract("Write a Scala game", "Snake game", List("Console-only"), List("Runs locally"), List.empty))
+    }
+
+    // Mock planner returns a bad plan first, and a refined plan on second invocation
+    var planCalls = 0
+    given TaskPlanner[IO, GoalContract] with {
+      override def generatePlan(contract: GoalContract): IO[List[String]] = IO.delay {
+        planCalls += 1
+        if (planCalls == 1) List("1. Bad step") else List("1. Refined Step A", "2. Refined Step B")
+      }
+    }
+
+    given PlanVerifier[IO] with {
+      override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
+        IO.pure(false) // Always fails verification to trigger the refinement pass
+    }
+
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.pure(LLMResponse("Let's build a Console Snake game", List.empty, OpenAIUsage(10, 5, 15)))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    val session = Session("session_1", Context(List(commandTool), Memory(), List.empty), Path.of("target/test-session.md"))
+
+    val (_, actions) = (for {
+      backend <- DefaultAgentBackend.create[IO](session)
+      results <- executeSequentially(backend, "Write a Scala game")
+    } yield (results.map(_._1), results.flatMap(_._2))).unsafeRunSync()
+
+    // Assert warning system message is emitted
+    assert(actions.contains(AgentAction.SystemMessage("[Intake] [WARNING] Plan failed verification. Executed plan-refinement pass.")))
+
+    // Assert refined plan is printed
+    assert(actions.contains(AgentAction.SystemMessage("  * 1. Refined Step A")))
+    assert(actions.contains(AgentAction.SystemMessage("  * 2. Refined Step B")))
+
+    // Assert that the context saved contains the refined plan!
+    val persisted = written.get
+    val working = persisted.memory.working.get
+    assertEquals(working.plan, List("1. Refined Step A", "2. Refined Step B"))
+    assertEquals(working.currentStep, 0)
+    assertEquals(planCalls, 2) // Confirms planner was invoked twice
   }
 
   test("Context Distillation: distills tool output during session persistence if threshold exceeded") {
