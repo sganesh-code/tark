@@ -110,17 +110,20 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     AgentTask(
       description = Some("Persisting session"),
       action =
-        Stream.eval {
-          resultRef.get.flatMap {
-            case Some(result) =>
-              updateContextAfterConversation(session.context, result).flatMap { updatedContext =>
-                val updatedSession = session.copy(context = updatedContext)
-                sink.write(updatedContext, session.sessionPath) >> sessionRef.set(updatedSession)
+        Stream.eval(resultRef.get).flatMap {
+          case Some(result) =>
+            Stream.eval(updateContextAfterConversation(session.context, result)).flatMap { case (updatedContext, progressionMsgOpt) =>
+              val updatedSession = session.copy(context = updatedContext)
+              val writeAndSet = Stream.eval(sink.write(updatedContext, session.sessionPath) >> sessionRef.set(updatedSession)).drain
+              val notification = progressionMsgOpt match {
+                case Some(msg) => Stream.emit(AgentAction.SystemMessage[F](msg))
+                case None => Stream.empty
               }
-            case None =>
-              Sync[F].unit
-          }
-        }.drain
+              writeAndSet ++ notification
+            }
+          case None =>
+            Stream.empty
+        }
     )
 
   private def emitActions(actions: AgentAction[F]*): Stream[F, AgentTask[F]] =
@@ -148,7 +151,7 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     !lowerIn.contains("find ")
   }
 
-  private def updateContextAfterConversation(context: Context, result: ConversationResult): F[Context] = {
+  private def updateContextAfterConversation(context: Context, result: ConversationResult): F[(Context, Option[String])] = {
     val currentAgentState = context.memory.working.getOrElse(AgentState())
     val F = summon[Sync[F]]
 
@@ -157,18 +160,17 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     val progressionF = activeStepOpt match {
       case Some(activeStep) =>
         val progressCtx = ProgressContext(currentAgentState.goal, activeStep, result.messages)
-        progressTracker.evaluateProgress(progressCtx).flatMap { completed =>
+        progressTracker.evaluateProgress(progressCtx).map { completed =>
           if (completed) {
             val nextStep = currentAgentState.currentStep + 1
             val updatedCompleted = currentAgentState.completedSteps :+ activeStep
-            F.delay(println(s"\u001b[33m[Progression] Checked off: $activeStep\u001b[0m")) >>
-              F.pure((nextStep, updatedCompleted))
+            (nextStep, updatedCompleted, Some(s"[Progression] Checked off: $activeStep"))
           } else {
-            F.pure((currentAgentState.currentStep, currentAgentState.completedSteps))
+            (currentAgentState.currentStep, currentAgentState.completedSteps, None)
           }
         }
       case None =>
-        F.pure((currentAgentState.currentStep, currentAgentState.completedSteps))
+        F.pure((currentAgentState.currentStep, currentAgentState.completedSteps, None))
     }
 
     // 2. Perform context distillation
@@ -199,7 +201,7 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     }
 
     for {
-      (nextStep, nextCompleted) <- progressionF
+      (nextStep, nextCompleted, progressionMsgOpt) <- progressionF
       distilledMessages <- distilledMessagesF
       distilledInteractions <- distilledInteractionsF
       isAllDone = currentAgentState.plan.nonEmpty && nextStep >= currentAgentState.plan.length
@@ -212,9 +214,12 @@ final class DefaultAgentBackend[F[_]: Sync] private (
         done = isAllDone,
         reasonForStop = if (isAllDone) Some("assistant_response") else result.finalAnswer.map(_ => "assistant_response")
       )
-    } yield context.copy(
-      history = context.history ++ distilledInteractions,
-      memory = context.memory.copy(working = Some(nextAgentState))
+    } yield (
+      context.copy(
+        history = context.history ++ distilledInteractions,
+        memory = context.memory.copy(working = Some(nextAgentState))
+      ),
+      progressionMsgOpt
     )
   }
 }
