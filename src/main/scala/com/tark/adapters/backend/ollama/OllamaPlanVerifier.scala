@@ -11,7 +11,7 @@ import com.tark.ports.shared.serialization.Deserializable
  * Concrete implementation of the PlanVerifier port that uses
  * Ollama LlmClient to perform a self-critique pass on generated task plans.
  */
-class OllamaPlanVerifier[F[_]: Sync](client: LlmClient[F]) extends PlanVerifier[F] {
+class OllamaPlanVerifier[F[_]: Sync](client: LlmClient[F]) extends PlanVerifier[F, GoalContract] {
 
   override def verifyPlan(contract: GoalContract, plan: List[String]): F[Boolean] = {
     val systemPrompt = PlanVerifierPrompt.systemInstructions

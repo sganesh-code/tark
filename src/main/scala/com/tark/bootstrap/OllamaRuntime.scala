@@ -26,6 +26,6 @@ object OllamaRuntime {
   given taskPlanner[F[_]: Sync](using client: LlmClient[F]): TaskPlanner[F, GoalContract] =
     new OllamaTaskPlanner[F](client)
 
-  given planVerifier[F[_]: Sync](using client: LlmClient[F]): PlanVerifier[F] =
+  given planVerifier[F[_]: Sync](using client: LlmClient[F]): PlanVerifier[F, GoalContract] =
     new OllamaPlanVerifier[F](client)
 }

@@ -23,7 +23,7 @@ final class DefaultAgentBackend[F[_]: Sync] private (
   reactEngine: ReActLoopEngine[F],
   goalContractParser: GoalContractParser[F],
   taskPlanner: TaskPlanner[F, GoalContract],
-  planVerifier: PlanVerifier[F],
+  planVerifier: PlanVerifier[F, GoalContract],
   contextDistiller: ContextDistiller[F],
   config: Config
 )(using
@@ -203,7 +203,7 @@ object DefaultAgentBackend {
     streamingLlmClient: StreamingLlmClient[F],
     goalContractParser: GoalContractParser[F],
     taskPlanner: TaskPlanner[F, GoalContract],
-    planVerifier: PlanVerifier[F],
+    planVerifier: PlanVerifier[F, GoalContract],
     config: Config
   ): F[DefaultAgentBackend[F]] =
     for {
@@ -224,7 +224,7 @@ object DefaultAgentBackend {
     llmClient: LlmClient[F],
     goalContractParser: GoalContractParser[F],
     taskPlanner: TaskPlanner[F, GoalContract],
-    planVerifier: PlanVerifier[F],
+    planVerifier: PlanVerifier[F, GoalContract],
     config: Config
   ): F[DefaultAgentBackend[F]] = {
     given StreamingLlmClient[F] = StreamingLlmClient.fromBuffered(llmClient)

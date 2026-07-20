@@ -34,7 +34,7 @@ class DefaultAgentBackendSpec extends FunSuite {
       IO.pure(List.empty[String])
   }
 
-  given PlanVerifier[IO] with {
+  given PlanVerifier[IO, GoalContract] with {
     override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
       IO.pure(true)
   }
@@ -595,7 +595,7 @@ class DefaultAgentBackendSpec extends FunSuite {
         IO.pure(List("1. Research architecture", "2. Implement canvas", "3. Run tests"))
     }
 
-    given PlanVerifier[IO] with {
+    given PlanVerifier[IO, GoalContract] with {
       override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
         IO.pure(true)
     }
@@ -674,7 +674,7 @@ class DefaultAgentBackendSpec extends FunSuite {
       }
     }
 
-    given PlanVerifier[IO] with {
+    given PlanVerifier[IO, GoalContract] with {
       override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
         IO.pure(false) // Always fails verification to trigger the refinement pass
     }
