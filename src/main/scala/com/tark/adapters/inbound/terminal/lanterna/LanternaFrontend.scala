@@ -45,14 +45,21 @@ final class LanternaFrontend(
   }
 
   private def executeActions(actions: Stream[IO, AgentAction[IO]]): IO[Unit] = {
-    Ref.of[IO, Option[PanelState]](None).flatMap { panelStateRef =>
-      val panelConfig = PanelConfig(
-        width = 40,
+    for {
+      panelStateRef <- Ref.of[IO, Option[PanelState]](None)
+      rWidth <- IO.blocking {
+        val size = screen.getTerminalSize
+        val width = size.getColumns
+        val splitCol = (width * 0.65).toInt
+        width - splitCol - 2
+      }
+      panelConfig = PanelConfig(
+        width = rWidth,
         borderStyle = BorderStyle.fromString(config.panelBorder),
         maxLines = 15
       )
-
-      Ref.of[IO, Boolean](false).flatMap { inlineOpen =>
+      inlineOpen <- Ref.of[IO, Boolean](false)
+      _ <- {
         def closeInline: IO[Unit] =
           inlineOpen.get.ifM(writer.finishInline() >> inlineOpen.set(false), IO.unit)
 
@@ -119,7 +126,7 @@ final class LanternaFrontend(
             closeInline >> reader.readChoice(prompt, options, allowCustom).flatMap(choice => executeActions(onSelected(choice)))
         }.compile.drain.guarantee(closeInline >> status.clearPanel())
       }
-    }
+    } yield ()
   }
 
   def loop: IO[Unit] = {

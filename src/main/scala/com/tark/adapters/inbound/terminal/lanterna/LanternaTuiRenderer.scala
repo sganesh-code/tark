@@ -8,7 +8,6 @@ import com.tark.ui.{TerminalStyle, TerminalColor}
 
 object LanternaTuiRenderer {
   def render(screen: Screen, state: TuiState): Unit = screen.synchronized {
-    screen.clear()
     val size = screen.getTerminalSize
     val width = size.getColumns
     val height = size.getRows
@@ -31,9 +30,7 @@ object LanternaTuiRenderer {
     tg.setForegroundColor(TextColor.ANSI.DEFAULT)
     
     // Draw horizontal separator above status bar
-    for (col <- 0 until width) {
-      tg.putString(col, mainAreaHeight - 1, "─")
-    }
+    tg.putString(0, mainAreaHeight - 1, "─" * width)
 
     // Draw vertical separator between left log and right panel
     for (row <- 0 until (mainAreaHeight - 1)) {
@@ -43,19 +40,30 @@ object LanternaTuiRenderer {
     // Joint character
     tg.putString(splitCol, mainAreaHeight - 1, "┴")
 
-    // 2. Wrap and Draw Log Scrollback (Left Pane)
+    // 2. Wrap and Draw Log Scrollback (Left Pane) with scrollOffset support
     val wrappedLogLines = state.scrollback.flatMap { logLine =>
       wrapLine(logLine, logWidth).map(text => (text, logLine.style))
     }
 
     val maxLogRows = mainAreaHeight - 1
-    val logToDraw = wrappedLogLines.takeRight(maxLogRows)
-    logToDraw.zipWithIndex.foreach { case ((text, style), idx) =>
-      val row = maxLogRows - logToDraw.size + idx
-      tg.setForegroundColor(LanternaStyleMapper.toLanternaColor(style.foreground))
-      tg.enableModifiers(LanternaStyleMapper.toLanternaSGRs(style)*)
-      tg.putString(0, row, text)
-      tg.clearModifiers()
+    val maxScroll = math.max(0, wrappedLogLines.size - maxLogRows)
+    val currentScroll = math.min(state.scrollOffset, maxScroll)
+    val sliceStart = maxScroll - currentScroll
+    val logToDraw = wrappedLogLines.slice(sliceStart, sliceStart + maxLogRows)
+
+    for (idx <- 0 until maxLogRows) {
+      val row = idx
+      if (idx < logToDraw.size) {
+        val (text, style) = logToDraw(idx)
+        val cleanText = text.padTo(logWidth, ' ').take(logWidth)
+        tg.setForegroundColor(LanternaStyleMapper.toLanternaColor(style.foreground))
+        tg.enableModifiers(LanternaStyleMapper.toLanternaSGRs(style)*)
+        tg.putString(0, row, cleanText)
+        tg.clearModifiers()
+      } else {
+        tg.setForegroundColor(TextColor.ANSI.DEFAULT)
+        tg.putString(0, row, " " * logWidth)
+      }
     }
 
     // 3. Draw Active Context Panel (Right Pane)
@@ -63,26 +71,40 @@ object LanternaTuiRenderer {
       wrapText(line, rightWidth)
     }.take(mainAreaHeight - 1)
 
-    panelToDraw.zipWithIndex.foreach { case (line, idx) =>
+    for (idx <- 0 until (mainAreaHeight - 1)) {
+      val row = idx
       val col = splitCol + 1
-      tg.setForegroundColor(TextColor.ANSI.DEFAULT)
-      tg.putString(col, idx, line)
+      if (idx < panelToDraw.size) {
+        val line = panelToDraw(idx)
+        val cleanLine = line.padTo(rightWidth, ' ').take(rightWidth)
+        tg.setForegroundColor(TextColor.ANSI.DEFAULT)
+        tg.putString(col, row, cleanLine)
+      } else {
+        tg.setForegroundColor(TextColor.ANSI.DEFAULT)
+        tg.putString(col, row, " " * rightWidth)
+      }
     }
 
     // 4. Draw Status Bar
     val spinnerPart = if (state.spinnerFrame.nonEmpty) s"${state.spinnerFrame} " else ""
     val statusText = stripAnsi(state.statusText)
     val combinedStatus = s"$spinnerPart$statusText"
+    val cleanStatusLine = combinedStatus.padTo(width, ' ').take(width)
     tg.setForegroundColor(TextColor.ANSI.YELLOW)
-    tg.putString(0, height - 2, combinedStatus)
+    tg.putString(0, height - 2, cleanStatusLine)
 
     // 5. Draw Active Prompt
     val cleanPrompt = stripAnsi(state.activePrompt)
-    tg.setForegroundColor(TextColor.ANSI.GREEN)
-    tg.putString(0, height - 1, cleanPrompt)
-    
     val cleanInput = stripAnsi(state.activeInput)
     val inputStartCol = cleanPrompt.length
+
+    // Clear prompt row with spaces first to prevent trailing leftovers
+    tg.setForegroundColor(TextColor.ANSI.DEFAULT)
+    tg.putString(0, height - 1, " " * width)
+
+    tg.setForegroundColor(TextColor.ANSI.GREEN)
+    tg.putString(0, height - 1, cleanPrompt)
+
     if (cleanInput.startsWith("/")) {
       val firstSpace = cleanInput.indexOf(' ')
       if (firstSpace == -1) {
@@ -116,13 +138,13 @@ object LanternaTuiRenderer {
   private def stripAnsi(s: String): String =
     s.replaceAll("\\u001b\\[[;\\d]*[ -/]*[@-~]", "")
 
-  private def wrapLine(line: LanternaLogLine, width: Int): Vector[String] = {
+  private[lanterna] def wrapLine(line: LanternaLogLine, width: Int): Vector[String] = {
     val prefix = line.sender.map(s => s"[$s] ").getOrElse("")
     val fullText = prefix + line.text
     wrapText(fullText, width)
   }
 
-  private def wrapText(text: String, width: Int): Vector[String] = {
+  private[lanterna] def wrapText(text: String, width: Int): Vector[String] = {
     val cleanText = stripAnsi(text)
     if (width <= 0) Vector(cleanText)
     else {

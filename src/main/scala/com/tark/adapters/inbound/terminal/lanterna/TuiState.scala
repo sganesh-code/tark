@@ -12,5 +12,6 @@ case class TuiState(
   activePrompt: String = "",
   activeInput: String = "",
   cursorPosition: Int = 0,
-  inlineOpen: Boolean = false
+  inlineOpen: Boolean = false,
+  scrollOffset: Int = 0
 )

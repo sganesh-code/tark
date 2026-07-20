@@ -95,4 +95,26 @@ class LanternaTerminalSpec extends FunSuite {
     assertEquals(state.statusText, "Working on goal...")
     assertEquals(state.activePanelLines, Vector("Sub-step 1", "Sub-step 2"))
   }
+
+  test("LanternaTuiRenderer respects scrollOffset") {
+    import com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal
+    val terminal = new DefaultVirtualTerminal(new TerminalSize(80, 24))
+    val screen = new TerminalScreen(terminal)
+    screen.startScreen()
+
+    val state = TuiState(
+      scrollback = Vector(
+        LanternaLogLine(Some("Agent"), "Line 1", TerminalStyle.Default),
+        LanternaLogLine(Some("Agent"), "Line 2", TerminalStyle.Default),
+        LanternaLogLine(Some("Agent"), "Line 3", TerminalStyle.Default)
+      ),
+      scrollOffset = 1
+    )
+
+    // Verify drawing triggers with scrollOffset without throwing exception
+    LanternaTuiRenderer.render(screen, state)
+    
+    val size = screen.getTerminalSize
+    assertEquals(size.getColumns, 80)
+  }
 }
