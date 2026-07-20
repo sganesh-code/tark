@@ -9,7 +9,7 @@ import com.tark.domain.memory.{EpisodeSummary, Memory}
 import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult, OpenAIMessage}
 import com.tark.domain.Interaction
 import com.tark.ports.AgentBackend
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser, TaskPlanner, PlanVerifier}
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser, TaskPlanner, PlanVerifier, ProgressTracker}
 import com.tark.domain.{GoalContract, AgentState}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.ports.outbound.tool.CommandExecutor
@@ -37,6 +37,11 @@ class DefaultAgentBackendSpec extends FunSuite {
   given PlanVerifier[IO, GoalContract] with {
     override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
       IO.pure(true)
+  }
+
+  given ProgressTracker[IO] with {
+    override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] =
+      IO.pure(false) // default to false so other tests bypass progression checks
   }
 
   private val commandTool =
@@ -600,6 +605,11 @@ class DefaultAgentBackendSpec extends FunSuite {
         IO.pure(true)
     }
 
+    given ProgressTracker[IO] with {
+      override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] =
+        IO.pure(false)
+    }
+
     given LlmClient[IO] with {
       override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
         IO.pure(LLMResponse("Let's build a Console Snake game", List.empty, OpenAIUsage(10, 5, 15)))
@@ -677,6 +687,11 @@ class DefaultAgentBackendSpec extends FunSuite {
     given PlanVerifier[IO, GoalContract] with {
       override def verifyPlan(contract: GoalContract, plan: List[String]): IO[Boolean] =
         IO.pure(false) // Always fails verification to trigger the refinement pass
+    }
+
+    given ProgressTracker[IO] with {
+      override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] =
+        IO.pure(false)
     }
 
     given LlmClient[IO] with {
@@ -777,6 +792,86 @@ class DefaultAgentBackendSpec extends FunSuite {
     // The interaction inside context.history should also have distilled output!
     val persistedInteraction = persisted.history.head
     assertEquals(persistedInteraction.output, "distilled output")
+  }
+
+  test("Plan Progression: advances currentStep and updates completedSteps on progress confirmation") {
+    var written: Option[Context] = None
+
+    given Sink[IO, Context, Path] with {
+      override def write(data: Context, destination: Path): IO[Unit] = IO.delay {
+        written = Some(data)
+      }
+    }
+
+    given EpisodicMemorySummarizer[IO] with {
+      override def summarize(sessionId: String, history: List[com.tark.domain.Interaction]): IO[EpisodeSummary] =
+        IO.raiseError(new AssertionError("summarizer should not be invoked"))
+    }
+
+    given Clock[IO] with {
+      override def realTimeMillis: IO[Long] = IO.pure(1000L)
+    }
+
+    given CommandExecutor[IO] with {
+      override def definition: ToolDefinition = commandTool
+      override def execute(context: Context, toolCall: ToolCall): IO[ToolResult] =
+        IO.raiseError(new AssertionError("tool execution should not be invoked"))
+    }
+
+    // Config with disabled distillation to focus purely on progression
+    val customConfig = com.tark.domain.Config.default.copy(enableDistillation = false)
+    given com.tark.domain.Config = customConfig
+
+    given LlmClient[IO] with {
+      override def chat(prompt: Prompt): IO[LLMResponse[ToolCall]] =
+        IO.pure(LLMResponse("done", List.empty, OpenAIUsage(0, 0, 0)))
+    }
+    given StreamingLlmClient[IO] = summon[LlmClient[IO]].streaming.getOrElse(StreamingLlmClient.fromBuffered(summon[LlmClient[IO]]))
+
+    // Mock progress tracker returns TRUE to confirm completion of the active step
+    given ProgressTracker[IO] with {
+      override def evaluateProgress(goal: String, activeStep: String, conversation: List[OpenAIMessage]): IO[Boolean] = {
+        assertEquals(activeStep, "Step 1: Research")
+        IO.pure(true)
+      }
+    }
+
+    // Prepare active state with an initialized plan at step 0
+    val activeState = AgentState(
+      goal = "Write a parser",
+      deliverable = "Scanner",
+      plan = List("Step 1: Research", "Step 2: Code"),
+      currentStep = 0,
+      completedSteps = List.empty
+    )
+
+    val session = Session("session_1", Context(List(commandTool), Memory(working = Some(activeState)), List.empty), Path.of("target/test-session.md"))
+
+    // Prepare a conversation outcome
+    val result = ConversationResult(
+      messages = List(OpenAIMessage(role = "user", content = Some("help me research"))),
+      interactions = Vector.empty,
+      finalAnswer = Some("done")
+    )
+
+    val backendF = DefaultAgentBackend.create[IO](session)
+    val program = backendF.flatMap { backend =>
+      Ref.of[IO, Option[ConversationResult]](Some(result)).flatMap { resultRef =>
+        val task = backend.persistConversationTask(session, resultRef)
+        task.action.compile.drain
+      }
+    }
+
+    program.unsafeRunSync()
+
+    // Assert that the state updated in context has advanced the plan steps!
+    assert(written.isDefined)
+    val persisted = written.get
+    val persistedWorking = persisted.memory.working.get
+
+    assertEquals(persistedWorking.currentStep, 1)
+    assertEquals(persistedWorking.completedSteps, List("Step 1: Research"))
+    assertEquals(persistedWorking.done, false) // 1 < 2 steps, so still false
   }
 
   private def executeSequentially(

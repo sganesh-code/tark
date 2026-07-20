@@ -18,8 +18,10 @@ object ContextProvider {
           Option.when(state.plan.nonEmpty) {
             val planStr = state.plan.zipWithIndex.map {
               case (step, idx) => 
-                val marker = if (idx == state.currentStep) "-> " else "  "
-                s" $marker${idx + 1}. $step"
+                val marker = if (idx < state.currentStep) "  [x]"
+                             else if (idx == state.currentStep) "-> [ ]"
+                             else "   [ ]"
+                s"$marker ${idx + 1}. $step"
             }.mkString("\n")
             s"- **Plan Progress**:\n$planStr"
           }

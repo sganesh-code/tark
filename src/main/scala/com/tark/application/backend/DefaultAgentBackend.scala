@@ -24,6 +24,7 @@ final class DefaultAgentBackend[F[_]: Sync] private (
   goalContractParser: GoalContractParser[F],
   taskPlanner: TaskPlanner[F, GoalContract],
   planVerifier: PlanVerifier[F, GoalContract],
+  progressTracker: ProgressTracker[F],
   contextDistiller: ContextDistiller[F],
   config: Config
 )(using
@@ -149,7 +150,27 @@ final class DefaultAgentBackend[F[_]: Sync] private (
 
   private def updateContextAfterConversation(context: Context, result: ConversationResult): F[Context] = {
     val currentAgentState = context.memory.working.getOrElse(AgentState())
+    val F = summon[Sync[F]]
 
+    // 1. Evaluate task step progression
+    val activeStepOpt = currentAgentState.plan.lift(currentAgentState.currentStep)
+    val progressionF = activeStepOpt match {
+      case Some(activeStep) =>
+        progressTracker.evaluateProgress(currentAgentState.goal, activeStep, result.messages).flatMap { completed =>
+          if (completed) {
+            val nextStep = currentAgentState.currentStep + 1
+            val updatedCompleted = currentAgentState.completedSteps :+ activeStep
+            F.delay(println(s"\u001b[33m[Progression] Checked off: $activeStep\u001b[0m")) >>
+              F.pure((nextStep, updatedCompleted))
+          } else {
+            F.pure((currentAgentState.currentStep, currentAgentState.completedSteps))
+          }
+        }
+      case None =>
+        F.pure((currentAgentState.currentStep, currentAgentState.completedSteps))
+    }
+
+    // 2. Perform context distillation
     val distilledMessagesF = result.messages.traverse { msg =>
       // Find matching tool call in assistant messages to check original command arguments
       val associatedToolCall = result.messages.flatMap(_.tool_calls.getOrElse(Nil)).find(_.id == msg.tool_call_id.getOrElse(""))
@@ -177,13 +198,18 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     }
 
     for {
+      (nextStep, nextCompleted) <- progressionF
       distilledMessages <- distilledMessagesF
       distilledInteractions <- distilledInteractionsF
+      isAllDone = currentAgentState.plan.nonEmpty && nextStep >= currentAgentState.plan.length
       nextAgentState = currentAgentState.copy(
         messages = distilledMessages,
         candidateAnswer = result.finalAnswer,
-        done = result.finalAnswer.isDefined,
-        reasonForStop = result.finalAnswer.map(_ => "assistant_response")
+        plan = currentAgentState.plan,
+        currentStep = nextStep,
+        completedSteps = nextCompleted,
+        done = isAllDone,
+        reasonForStop = if (isAllDone) Some("assistant_response") else result.finalAnswer.map(_ => "assistant_response")
       )
     } yield context.copy(
       history = context.history ++ distilledInteractions,
@@ -204,6 +230,7 @@ object DefaultAgentBackend {
     goalContractParser: GoalContractParser[F],
     taskPlanner: TaskPlanner[F, GoalContract],
     planVerifier: PlanVerifier[F, GoalContract],
+    progressTracker: ProgressTracker[F],
     config: Config
   ): F[DefaultAgentBackend[F]] =
     for {
@@ -214,7 +241,7 @@ object DefaultAgentBackend {
       toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
       contextDistiller = ContextDistiller[F](llmClient)
       reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, config)
-    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, taskPlanner, planVerifier, contextDistiller, config)
+    } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, taskPlanner, planVerifier, progressTracker, contextDistiller, config)
 
   def createWithFallbackStreaming[F[_]: Sync](session: Session)(using
     sink: Sink[F, Context, Path],
@@ -225,6 +252,7 @@ object DefaultAgentBackend {
     goalContractParser: GoalContractParser[F],
     taskPlanner: TaskPlanner[F, GoalContract],
     planVerifier: PlanVerifier[F, GoalContract],
+    progressTracker: ProgressTracker[F],
     config: Config
   ): F[DefaultAgentBackend[F]] = {
     given StreamingLlmClient[F] = StreamingLlmClient.fromBuffered(llmClient)
