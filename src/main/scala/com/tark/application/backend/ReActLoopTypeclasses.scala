@@ -8,16 +8,16 @@ import com.tark.ui.{AgentAction, AgentTask}
 import fs2.Stream
 
 /**
- * Typeclass for mapping a raw tool execution tuple (ToolCall, ToolResult) into its corresponding
- * conversation message (OpenAIMessage) and persistent history interaction (Interaction).
+ * Generic typeclass for converting a domain representation A into an OpenAIMessage.
+ * This unifies all user, system, tool, and assistant message serialization logic.
  */
-trait ToolInteractionMapper[T] {
-  def toMessage(item: T): OpenAIMessage
-  def toInteraction(item: T, baseTimestamp: Long, index: Int): Interaction
+trait ToMessage[A] {
+  def toMessage(item: A): OpenAIMessage
 }
 
-object ToolInteractionMapper {
-  given ToolInteractionMapper[(ToolCall, ToolResult)] with {
+object ToMessage {
+  // Mapping a raw tool execution tuple (ToolCall, ToolResult) into its tool message representation
+  given ToMessage[(ToolCall, ToolResult)] with {
     override def toMessage(item: (ToolCall, ToolResult)): OpenAIMessage = {
       val (toolCall, result) = item
       OpenAIMessage(
@@ -26,9 +26,33 @@ object ToolInteractionMapper {
         tool_call_id = Some(toolCall.id)
       )
     }
+  }
 
-    override def toInteraction(item: (ToolCall, ToolResult), baseTimestamp: Long, index: Int): Interaction = {
+  // Mapping an assistant response into its assistant message representation
+  given ToMessage[LLMResponse[ToolCall]] with {
+    override def toMessage(response: LLMResponse[ToolCall]): OpenAIMessage =
+      OpenAIMessage(
+        role = "assistant",
+        content = if (response.content.nonEmpty) Some(response.content) else None,
+        tool_calls = if (response.results.nonEmpty) Some(response.results) else None
+      )
+  }
+}
+
+/**
+ * Generic typeclass for converting a domain representation A (along with contextual data C)
+ * into a persistent history Interaction.
+ */
+trait ToInteraction[A, C] {
+  def toInteraction(item: A, context: C): Interaction
+}
+
+object ToInteraction {
+  // Mapping a raw tool execution tuple into an Interaction
+  given ToInteraction[(ToolCall, ToolResult), (Long, Int)] with {
+    override def toInteraction(item: (ToolCall, ToolResult), ctx: (Long, Int)): Interaction = {
       val (toolCall, result) = item
+      val (baseTimestamp, index) = ctx
       Interaction(
         id = s"interaction_${baseTimestamp}_$index",
         input = toolCall.function.arguments,
@@ -38,18 +62,11 @@ object ToolInteractionMapper {
       )
     }
   }
-}
 
-/**
- * Typeclass for mapping an LLM response of final answer into a history Interaction.
- */
-trait CompletionInteractionMapper[T] {
-  def toInteraction(response: T, input: String, timestamp: Long): Interaction
-}
-
-object CompletionInteractionMapper {
-  given CompletionInteractionMapper[LLMResponse[ToolCall]] with {
-    override def toInteraction(response: LLMResponse[ToolCall], input: String, timestamp: Long): Interaction =
+  // Mapping an LLM final answer into an Interaction
+  given ToInteraction[LLMResponse[ToolCall], (String, Long)] with {
+    override def toInteraction(response: LLMResponse[ToolCall], ctx: (String, Long)): Interaction = {
+      val (input, timestamp) = ctx
       Interaction(
         id = s"interaction_$timestamp",
         input = input,
@@ -57,24 +74,7 @@ object CompletionInteractionMapper {
         timestamp = timestamp,
         toolName = "llm_completion"
       )
-  }
-}
-
-/**
- * Typeclass for mapping an LLM response into an assistant OpenAIMessage.
- */
-trait AssistantMessageMapper[T] {
-  def toAssistantMessage(response: T): OpenAIMessage
-}
-
-object AssistantMessageMapper {
-  given AssistantMessageMapper[LLMResponse[ToolCall]] with {
-    override def toAssistantMessage(response: LLMResponse[ToolCall]): OpenAIMessage =
-      OpenAIMessage(
-        role = "assistant",
-        content = if (response.content.nonEmpty) Some(response.content) else None,
-        tool_calls = if (response.results.nonEmpty) Some(response.results) else None
-      )
+    }
   }
 }
 

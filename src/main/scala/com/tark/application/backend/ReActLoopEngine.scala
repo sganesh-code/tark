@@ -20,8 +20,8 @@ final case class ConversationResult(
 
 /**
  * Orchestrates the ReAct execution loop as a pure, inspectable state machine,
- * as defined in agent_harness_research_grounding.md. Responsibility for mapping
- * and formatting operations is entirely delegated to ReActLoopTypeclasses.
+ * as defined in agent_harness_research_grounding.md. Responsibility for mapping,
+ * compilation, and formatting operations is entirely delegated to unified, generic typeclasses.
  */
 final class ReActLoopEngine[F[_]: Sync](
   streamingHandler: StreamingResponseHandler[F],
@@ -68,7 +68,7 @@ final class ReActLoopEngine[F[_]: Sync](
             case Some(response) => Sync[F].pure(response)
             case None           => Sync[F].raiseError(new IllegalStateException("Assistant response task did not complete."))
           }).flatMap { response =>
-            val assistantMessage = summon[AssistantMessageMapper[LLMResponse[ToolCall]]].toAssistantMessage(response)
+            val assistantMessage = summon[ToMessage[LLMResponse[ToolCall]]].toMessage(response)
 
             if response.results.isEmpty then
               Stream.emit(finalizeConversationTask(messages :+ assistantMessage, accumulatedInteractions, response, resultRef))
@@ -89,12 +89,13 @@ final class ReActLoopEngine[F[_]: Sync](
                 ).flatMap { toolTasks =>
                   Stream.emits(toolTasks) ++
                     Stream.eval(toolResultRef.get).flatMap { toolResults =>
-                      val mapper = summon[ToolInteractionMapper[(ToolCall, ToolResult)]]
-                      val toolMessages = toolResults.map(mapper.toMessage).toList
+                      val messageMapper = summon[ToMessage[(ToolCall, ToolResult)]]
+                      val toolMessages = toolResults.map(messageMapper.toMessage).toList
 
                       Stream.eval(clock.realTimeMillis).flatMap { now =>
+                        val interactionMapper = summon[ToInteraction[(ToolCall, ToolResult), (Long, Int)]]
                         val interactions = toolResults.zipWithIndex.map { case (item, idx) =>
-                          mapper.toInteraction(item, now, idx)
+                          interactionMapper.toInteraction(item, (now, idx))
                         }
 
                         runConversation(
@@ -122,7 +123,7 @@ final class ReActLoopEngine[F[_]: Sync](
       action =
         Stream.eval {
           clock.realTimeMillis.flatMap { now =>
-            val interaction = summon[CompletionInteractionMapper[LLMResponse[ToolCall]]].toInteraction(response, originalUserInput(messages), now)
+            val interaction = summon[ToInteraction[LLMResponse[ToolCall], (String, Long)]].toInteraction(response, (originalUserInput(messages), now))
             resultRef.set(
               Some(
                 ConversationResult(
