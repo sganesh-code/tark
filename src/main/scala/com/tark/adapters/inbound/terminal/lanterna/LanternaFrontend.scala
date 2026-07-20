@@ -55,7 +55,7 @@ final class LanternaFrontend(
       }
       panelConfig = PanelConfig(
         width = rWidth,
-        borderStyle = BorderStyle.fromString(config.panelBorder),
+        borderStyle = BorderStyle.None,
         maxLines = 15
       )
       inlineOpen <- Ref.of[IO, Boolean](false)
