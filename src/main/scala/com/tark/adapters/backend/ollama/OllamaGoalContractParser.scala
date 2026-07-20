@@ -8,6 +8,8 @@ import com.tark.ports.outbound.backend.GoalContractPrompt.given
 import com.tark.domain.tool.OpenAIMessage
 import com.tark.ports.shared.serialization.Deserializable
 
+import com.tark.domain.errors.IntakeError
+
 /**
  * Concrete implementation of GoalContractParser that uses Ollama LlmClient
  * to extract structured GoalContracts from user input.
@@ -33,7 +35,7 @@ class OllamaGoalContractParser[F[_]: Sync](client: LlmClient[F]) extends GoalCon
         case Right(contract) =>
           F.pure(contract)
         case Left(error) =>
-          F.raiseError(new RuntimeException(s"Failed to parse GoalContract: ${error.getMessage}", error))
+          F.raiseError(IntakeError(s"Failed to parse GoalContract: ${error.getMessage}", Some(error)))
       }
     }
   }

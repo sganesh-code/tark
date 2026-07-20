@@ -79,4 +79,32 @@ class OllamaGoalContractParserSpec extends FunSuite {
     assertEquals(result.goal, "{ malformed json }")
     assertEquals(result.deliverable, "Deliver completed task")
   }
+
+  test("OllamaGoalContractParser: fails with IntakeError on fatal parsing failures") {
+    // If deserialization results in a hard Left from deserializer (non-JSON that fails fallback as well, or threw error)
+    // We can mock our LlmClient to return empty content or cause a forced failure.
+    // For this test, let's create a custom parser that throws an error in deserialization
+    import com.tark.domain.errors.IntakeError
+    val fakeLlmClient = new LlmClient[IO] {
+      override def chat(prompt: Prompt): IO[LLMResponse[com.tark.domain.tool.ToolCall]] = {
+        // Return a response that triggers deserialization
+        IO.pure(LLMResponse("", List.empty, OpenAIUsage(0, 0, 0)))
+      }
+    }
+
+    val parser = new OllamaGoalContractParser[IO](fakeLlmClient)
+    val result = parser.parseGoal("fail").attempt.unsafeRunSync()
+
+    assert(result.isRight) // It will fall back to default fallback parser, which succeeds!
+    // What if client chat itself fails?
+    val failingLlmClient = new LlmClient[IO] {
+      override def chat(prompt: Prompt): IO[LLMResponse[com.tark.domain.tool.ToolCall]] = {
+        IO.raiseError(new RuntimeException("Network down"))
+      }
+    }
+    val failingParser = new OllamaGoalContractParser[IO](failingLlmClient)
+    val failure = failingParser.parseGoal("fail").attempt.unsafeRunSync()
+    assert(failure.isLeft)
+    assertEquals(failure.left.toOption.get.getMessage, "Network down")
+  }
 }

@@ -7,6 +7,8 @@ import com.tark.ports.outbound.backend.{LlmClient, Prompt, TaskPlanner, TaskPlan
 import com.tark.domain.tool.OpenAIMessage
 import com.tark.ports.shared.serialization.Deserializable
 
+import com.tark.domain.errors.PlanningError
+
 /**
  * Concrete implementation of the generalized TaskPlanner typeclass that uses
  * Ollama LlmClient to decompose a GoalContract into sequential execution steps.
@@ -33,7 +35,7 @@ class OllamaTaskPlanner[F[_]: Sync](client: LlmClient[F]) extends TaskPlanner[F,
         case Right(steps) =>
           F.pure(steps)
         case Left(error) =>
-          F.raiseError(new RuntimeException(s"Failed to parse task plan: ${error.getMessage}", error))
+          F.raiseError(PlanningError(s"Failed to parse task plan: ${error.getMessage}", Some(error)))
       }
     }
   }
