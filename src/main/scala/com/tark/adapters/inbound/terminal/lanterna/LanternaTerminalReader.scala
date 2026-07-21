@@ -35,13 +35,13 @@ final class LanternaTerminalReader(
     def loop(input: String, cursor: Int): IO[InputResult] = {
       IO.blocking {
         val newSize = screen.doResizeIfNecessary()
-        val key = screen.readInput()
+        val key = screen.pollInput()
         (newSize, key)
       }.flatMap { case (newSize, key) =>
         val checkResize = if (newSize != null) redraw else IO.unit
         checkResize >> {
           if (key == null) {
-            IO.sleep(10.millis).flatMap(_ => loop(input, cursor))
+            IO.sleep(20.millis).flatMap(_ => loop(input, cursor))
           } else {
             if (key.isCtrlDown) {
               val c = key.getCharacter
@@ -191,13 +191,13 @@ final class LanternaTerminalReader(
     def loop(selectedIdx: Int): IO[Int] = {
       IO.blocking {
         val newSize = screen.doResizeIfNecessary()
-        val key = screen.readInput()
+        val key = screen.pollInput()
         (newSize, key)
       }.flatMap { case (newSize, key) =>
         val checkResize = if (newSize != null) updateMenu(selectedIdx) else IO.unit
         checkResize >> {
           if (key == null) {
-            IO.sleep(10.millis).flatMap(_ => loop(selectedIdx))
+            IO.sleep(20.millis).flatMap(_ => loop(selectedIdx))
           } else {
             key.getKeyType match {
               case KeyType.ArrowUp =>
