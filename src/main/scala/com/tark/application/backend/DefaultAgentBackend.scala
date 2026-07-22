@@ -83,9 +83,9 @@ final class DefaultAgentBackend[F[_]: Sync] private (
                     s"[Intake] Generated Plan:" :: finalPlan.map(step => s"  * $step")
                   } else List("[Intake] No plan generated.")
 
-                  val notifyWarnings = Stream.emits(warnings.map(AgentAction.SystemMessage[F](_)))
-                  val notifyContract = Stream.emits(contractMessages.map(AgentAction.SystemMessage[F](_)))
-                  val notifyPlan = Stream.emits(planMessages.map(AgentAction.SystemMessage[F](_)))
+                  val notifyWarnings = Stream.emits(warnings.map(AgentAction.SystemMessage[F]))
+                  val notifyContract = Stream.emits(contractMessages.map(AgentAction.SystemMessage[F]))
+                  val notifyPlan = Stream.emits(planMessages.map(AgentAction.SystemMessage[F]))
 
                   val persist = Stream.eval(
                     sink.write(updatedContext, session.sessionPath) >> sessionRef.set(updatedSession)
