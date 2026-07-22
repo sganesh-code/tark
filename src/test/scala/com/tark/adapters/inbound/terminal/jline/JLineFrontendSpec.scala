@@ -213,7 +213,7 @@ class JLineFrontendSpec extends FunSuite {
           override def appendInline(message: String, style: TerminalStyle): IO[Unit] = IO.unit
           override def finishInline(): IO[Unit] = IO.unit
           override def printSystemMessage(message: String, style: TerminalStyle): IO[Unit] = IO.unit
-          override def printLine(message: String): IO[Unit] = IO.unit
+          override def printLine(message: String): IO[Unit] = IO.delay(events += s"line:$message").void
           override def clearScreen(): IO[Unit] = IO.unit
           override def flush(): IO[Unit] = IO.unit
         }
@@ -261,6 +261,53 @@ class JLineFrontendSpec extends FunSuite {
       _ <- status.clear()
     } yield ()
 
+    program.unsafeRunSync()
+  }
+
+  test("AgentCommandHighlighter highlights commands, flags, strings, numbers, and brackets correctly") {
+    import org.jline.utils.AttributedStyle
+
+    val highlighter = AgentCommandHighlighter()
+    
+    // 1. Slash commands: /run
+    val runHighlighted = highlighter.highlight(null, "/run sbt compile")
+    val style0 = runHighlighted.styleAt(0)
+    assertEquals(style0.toAnsi(), AttributedStyle.DEFAULT.foreground(AttributedStyle.YELLOW).bold().toAnsi())
+
+    // 2. Flags: --model
+    val flagHighlighted = highlighter.highlight(null, "use --model phi3")
+    val styleFlag = flagHighlighted.styleAt(4)
+    assertEquals(styleFlag.toAnsi(), AttributedStyle.DEFAULT.foreground(AttributedStyle.CYAN).toAnsi())
+
+    // 3. Strings: "ollama"
+    val stringHighlighted = highlighter.highlight(null, "run \"ollama\" command")
+    val styleStr = stringHighlighted.styleAt(4)
+    assertEquals(styleStr.toAnsi(), AttributedStyle.DEFAULT.foreground(AttributedStyle.GREEN).toAnsi())
+
+    // 4. Numbers: 42
+    val numHighlighted = highlighter.highlight(null, "port 42")
+    val styleNum = numHighlighted.styleAt(5)
+    assertEquals(styleNum.toAnsi(), AttributedStyle.DEFAULT.foreground(AttributedStyle.BLUE).toAnsi())
+
+    // 5. Brackets: [test]
+    val bracketHighlighted = highlighter.highlight(null, "[test]")
+    val styleBracket = bracketHighlighted.styleAt(0)
+    assertEquals(styleBracket.toAnsi(), AttributedStyle.DEFAULT.foreground(AttributedStyle.MAGENTA).bold().toAnsi())
+  }
+
+  test("JLineTerminalWriter prints cleanly on standard or dumb terminals") {
+    import org.jline.terminal.TerminalBuilder
+    import org.jline.reader.LineReaderBuilder
+    
+    val terminal = TerminalBuilder.builder().dumb(true).build()
+    val lineReader = LineReaderBuilder.builder().terminal(terminal).build()
+    val writer = JLineTerminalWriter(terminal, lineReader)
+    
+    val program = for {
+      _ <- writer.printAbove("Agent", "Short text", TerminalStyle.Agent)
+      _ <- writer.printAbove("Agent", "Long text\n" * 50, TerminalStyle.Agent)
+    } yield ()
+    
     program.unsafeRunSync()
   }
 }

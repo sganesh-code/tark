@@ -30,6 +30,7 @@ class OllamaLlmClient(
         tools = prompt.availableTools
       ))
       .response(asJson[OpenAIResponse])
+      .readTimeout(scala.concurrent.duration.Duration(60, scala.concurrent.duration.SECONDS))
 
     backend.send(request).map { response =>
       response.body match {
@@ -60,7 +61,7 @@ class OllamaLlmClient(
         stream_options = Some(StreamOptions(include_usage = true))
       ))
       .response(asStreamUnsafe(Fs2Streams[IO]))
-      .readTimeout(scala.concurrent.duration.Duration.Inf)
+      .readTimeout(scala.concurrent.duration.Duration(60, scala.concurrent.duration.SECONDS))
 
     Stream.eval(backend.send(request)).flatMap { response =>
       response.body match {

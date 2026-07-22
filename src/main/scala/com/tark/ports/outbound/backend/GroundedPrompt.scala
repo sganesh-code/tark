@@ -28,7 +28,12 @@ object GroundedPrompt {
         |Do not make major assumptions on behalf of the user when multiple viable options exist.
         |When you have questions or want to present choices for the user to select from to proceed, you MUST call the `questionnaire` tool call with the specific question/instruction and the options as answer choices. Never just list options in raw text if you can use the `questionnaire` tool call to get a structured selection from the user.""".stripMargin
 
-    val allInstructions = totalEnrichment.systemInstructions :+ userEngagementInstruction
+    val managedReadingInstruction =
+      """## Code and File Reading Constraints
+        |When reading files, searching directories, or inspecting system configurations, you MUST limit your reading operations to a manageable range of 50-80 lines in a single turn (using start_line and end_line parameters where supported).
+        |Never read entire large files or fetch huge payloads in a single turn. Instead, perform target-focused surgical reads, search recursively using grep, or inspect files incrementally across multiple conversational turns.""".stripMargin
+
+    val allInstructions = totalEnrichment.systemInstructions ++ List(userEngagementInstruction, managedReadingInstruction)
 
     val combinedSystemPrompt = Some(
       s"""You are a controlled, stateful autonomous coding agent.

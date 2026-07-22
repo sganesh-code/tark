@@ -89,8 +89,8 @@ object OpenAiFunctionParamsProperties {
 
 object OpenAIFunctionParams {
   given Encoder[OpenAIFunctionParams] = Encoder.instance {
-    case Str(t, d) => Json.obj("Str" -> Json.obj("type" -> Json.fromString(t), "description" -> Json.fromString(d)))
-    case Object(t, p, d) => Json.obj("Object" -> Json.obj("type" -> Json.fromString(t), "properties" -> p.asJson, "description" -> Json.fromString(d)))
+    case Str(t, d) => Json.obj("type" -> Json.fromString(t), "description" -> Json.fromString(d))
+    case Object(t, p, d) => Json.obj("type" -> Json.fromString(t), "properties" -> p.asJson, "description" -> Json.fromString(d))
     case Custom(schema) => schema
   }
   given Decoder[OpenAIFunctionParams] = deriveDecoder
@@ -115,10 +115,10 @@ object OpenAIRequest {
   given Encoder[OpenAIRequest] = Encoder.instance { request =>
     val base = JsonObject(
       "model" -> request.model.asJson,
-      "messages" -> request.messages.asJson,
-      "tools" -> request.tools.asJson
+      "messages" -> request.messages.asJson
     )
-    val withStream = request.stream.fold(base)(stream => base.add("stream", stream.asJson))
+    val withTools = if (request.tools.nonEmpty) base.add("tools", request.tools.asJson) else base
+    val withStream = request.stream.fold(withTools)(stream => withTools.add("stream", stream.asJson))
     val withStreamOptions = request.stream_options.fold(withStream)(opts => withStream.add("stream_options", opts.asJson))
     Json.fromJsonObject(withStreamOptions)
   }

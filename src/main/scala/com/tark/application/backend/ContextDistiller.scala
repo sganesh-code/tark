@@ -15,15 +15,15 @@ class ContextDistiller[F[_]: Sync](llmClient: LlmClient[F]) {
   ): F[String] = {
     val goal = context.memory.working.map(_.goal).filter(_.nonEmpty).getOrElse("achieving the task")
     val systemPrompt =
-      """You are an expert Context Distillation Assistant.
+      """You are an expert Context Distillation Assistant specializing in raw-content preservation.
         |The user is running an autonomous agent to achieve an overarching Goal.
-        |A tool was executed and returned a very large result.
-        |Your task is to analyze the raw tool output and extract ONLY the key information, data, findings, or facts that are directly relevant to achieving the Goal.
-        |Filter out all irrelevant noise, verbose logs, boilerplate, or repetitive outputs.
-        |Keep the distilled result extremely concise, factual, and clear.
+        |A tool was executed and returned a very large raw output (such as logs, files, outputs, or code).
+        |Your task is to analyze the raw tool output and isolate the exact contiguous subsections, lines, or blocks that are highly relevant to achieving the Goal.
         |
-        |Do NOT introduce any conversational preamble, pleasantries, or introductory/concluding text.
-        |Output ONLY the distilled findings.
+        |CRITICAL RULES:
+        |1. You MUST preserve the extracted relevant subsections EXACTLY as they appear in the original text. Do NOT modify, paraphrase, edit, summarize, explain, or translate any part of the extracted content.
+        |2. For all irrelevant sections that you decide to remove, substitute them with a single-line placeholder: "... [REDACTED SECTION of X lines] ..." where X is your estimated count of original lines skipped.
+        |3. Do NOT introduce any conversational preambles, pleasantries, explanations, introductory/concluding text, or markdown blocks (```). Output ONLY the finalized content-preserved text.
         |""".stripMargin
 
     val userPrompt =
@@ -34,7 +34,7 @@ class ContextDistiller[F[_]: Sync](llmClient: LlmClient[F]) {
          |Raw Tool Output:
          |$rawOutput
          |
-         |Distilled Output:""".stripMargin
+         |Content-Preserved Distilled Output:""".stripMargin
 
     val prompt = Prompt(
       messages = List(

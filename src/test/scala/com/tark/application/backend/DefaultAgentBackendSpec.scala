@@ -623,8 +623,8 @@ class DefaultAgentBackendSpec extends FunSuite {
       results <- executeSequentially(backend, "Write a Scala game")
     } yield (results.map(_._1), results.flatMap(_._2))).unsafeRunSync()
 
-    // Assert the task flow contains both "Goal Intake Complete" and "Waiting for assistant response"
-    assertEquals(tasks, List(Some("Goal Intake Complete"), Some("Waiting for assistant response"), Some("Finalizing assistant response"), Some("Persisting session")))
+    // Assert the task flow contains the unified intake task description
+    assertEquals(tasks, List(Some("[Intake] Analyzing goal and generating plan")))
 
     // Assert system messages for intake are emitted
     assert(actions.contains(AgentAction.SystemMessage("[Intake] Goal established: Write a Scala game")))
@@ -747,7 +747,11 @@ class DefaultAgentBackendSpec extends FunSuite {
     }
 
     // Config with very low threshold to trigger distillation on "raw tool output" (exceeds 5 chars)
-    val customConfig = com.tark.domain.Config.default.copy(enableDistillation = true, distillationThreshold = 5)
+    val customConfig = com.tark.domain.Config.default.copy(
+      enableDistillation = true,
+      distillationThreshold = 5,
+      contextWindowSize = 5
+    )
 
     given com.tark.domain.Config = customConfig
 
@@ -766,7 +770,7 @@ class DefaultAgentBackendSpec extends FunSuite {
     val rawToolMessage = OpenAIMessage(role = "tool", content = Some("very long raw tool output"), tool_call_id = Some("call_1"))
     val result = ConversationResult(
       messages = List(OpenAIMessage(role = "user", content = Some("run")), rawToolMessage),
-      interactions = Vector(Interaction("1", "args", "very long raw tool output", 1000L, "command_executor")),
+      interactions = Vector(Interaction("call_1", "args", "very long raw tool output", 1000L, "command_executor")),
       finalAnswer = Some("done")
     )
 

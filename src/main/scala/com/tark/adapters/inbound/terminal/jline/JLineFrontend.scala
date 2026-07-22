@@ -16,82 +16,7 @@ import org.jline.utils.{AttributedString, AttributedStringBuilder, AttributedSty
 import java.util.Collections
 import scala.concurrent.duration.*
 
-private[jline] object JLineChoiceMenu {
-  enum Key:
-    case Up, Down, Enter, Escape
-    case Other(code: Int)
-
-  def select(terminal: Terminal, prompt: String, options: List[String], allowCustom: Boolean): Int = {
-    val originalAttributes = terminal.enterRawMode()
-    val reader = terminal.reader()
-    val menuOptions = if allowCustom then options :+ "[Custom Option...]" else options
-    var selectedIndex = 0
-    var selecting = true
-
-    def drawMenu(): Unit = {
-      val writer = terminal.writer()
-      writer.println(s"\u001b[32m?\u001b[0m $prompt (Use arrow/jk keys, Enter to select):")
-      menuOptions.zipWithIndex.foreach { case (option, idx) =>
-        if idx == selectedIndex then writer.println(s"  \u001b[36m> $option\u001b[0m")
-        else writer.println(s"    $option")
-      }
-      terminal.flush()
-    }
-
-    def clearMenu(): Unit = {
-      val writer = terminal.writer()
-      writer.print(s"\u001b[${menuOptions.size + 1}A\r")
-      writer.print("\u001b[0J")
-      terminal.flush()
-    }
-
-    def readKey(): Key = {
-      val c = reader.read()
-      if c == 27 then {
-        val c2 = reader.read(10)
-        if c2 == 91 then
-          reader.read(10) match {
-            case 65 => Key.Up
-            case 66 => Key.Down
-            case _  => Key.Other(c)
-          }
-        else Key.Escape
-      } else if c == 10 || c == 13 then Key.Enter
-      else if c == 'k' || c == 'K' then Key.Up
-      else if c == 'j' || c == 'J' then Key.Down
-      else if c == 3 || c == 4 then Key.Escape
-      else Key.Other(c)
-    }
-
-    try {
-      drawMenu()
-      while selecting do
-        readKey() match {
-          case Key.Up =>
-            clearMenu()
-            selectedIndex = (selectedIndex - 1 + menuOptions.size) % menuOptions.size
-            drawMenu()
-          case Key.Down =>
-            clearMenu()
-            selectedIndex = (selectedIndex + 1) % menuOptions.size
-            drawMenu()
-          case Key.Enter =>
-            selecting = false
-          case Key.Escape =>
-            selectedIndex = -1
-            selecting = false
-          case Key.Other(_) =>
-            ()
-        }
-    } finally {
-      terminal.setAttributes(originalAttributes)
-      terminal.writer().print("\r")
-      terminal.flush()
-    }
-
-    selectedIndex
-  }
-}
+import org.jline.prompt.{PrompterFactory, ListResult}
 
 final class JLineTerminalReader(lineReader: LineReader) extends TerminalReader[IO]:
   override def readLine(promptPrefix: String): IO[InputResult] =
@@ -108,19 +33,44 @@ final class JLineTerminalReader(lineReader: LineReader) extends TerminalReader[I
   override def readChoice(prompt: String, options: List[String], allowCustom: Boolean): IO[String] =
     IO.blocking {
       val terminal = lineReader.getTerminal
-      val menuOptions = if allowCustom then options :+ "[Custom Option...]" else options
-      val selectedIndex = JLineChoiceMenu.select(terminal, prompt, options, allowCustom)
+      val prompter = PrompterFactory.create(terminal)
+      val builder = prompter.newBuilder()
 
-      if selectedIndex == -1 then ""
-      else {
-        val selectedValue = menuOptions(selectedIndex)
-        if allowCustom && selectedValue == "[Custom Option...]" then
-          Option(lineReader.readLine(s"\u001b[32mcustom $prompt:\u001b[0m ")).map(_.trim).getOrElse("")
-        else selectedValue
+      val listBuilder = builder.createListPrompt()
+        .name("choice")
+        .message(prompt)
+
+      options.zipWithIndex.foreach { case (opt, idx) =>
+        listBuilder.newItem(s"opt_$idx").text(opt)
+      }
+      if (allowCustom) {
+        listBuilder.newItem("custom").text("[Custom Option...]")
+      }
+      listBuilder.addPrompt()
+
+      val results = prompter.prompt(null, builder.build())
+      val selectedId = Option(results.get("choice"))
+        .map(_.asInstanceOf[ListResult].getSelectedId)
+        .getOrElse("")
+
+      if (selectedId == "custom") {
+        val inputBuilder = prompter.newBuilder()
+        inputBuilder.createInputPrompt()
+          .name("custom_input")
+          .message(s"custom $prompt:")
+          .addPrompt()
+
+        val inputResults = prompter.prompt(null, inputBuilder.build())
+        Option(inputResults.get("custom_input"))
+          .map(_.asInstanceOf[org.jline.prompt.InputResult].getInput.trim)
+          .getOrElse("")
+      } else {
+        val idxOpt = selectedId.stripPrefix("opt_").toIntOption
+        idxOpt.map(options).getOrElse("")
       }
     }
 
-final class JLineTerminalWriter(terminal: Terminal, lineReader: LineReader) extends TerminalWriter[IO]:
+final class JLineTerminalWriter(val terminal: Terminal, lineReader: LineReader) extends TerminalWriter[IO]:
   def terminalWidth: Int = terminal.getWidth
 
   override def printAbove(sender: String, message: String, style: TerminalStyle): IO[Unit] =
@@ -165,6 +115,12 @@ final class JLineTerminalWriter(terminal: Terminal, lineReader: LineReader) exte
       lineReader.printAbove(styled)
     }
 
+  override def printPanel(panelText: String): IO[Unit] =
+    IO.blocking {
+      terminal.writer().println(panelText)
+      terminal.flush()
+    }
+
   override def printLine(message: String): IO[Unit] =
     IO.blocking(terminal.writer().println(message))
 
@@ -192,25 +148,57 @@ object JLineTerminalWriter:
   }
 
 final class JLineTerminalStatus(terminal: Terminal) extends TerminalStatus[IO]:
-  private val status: Option[Status] = Option(Status.getStatus(terminal))
+  private val status: Option[Status] = {
+    if (terminal.getType == Terminal.TYPE_DUMB || terminal.getType == Terminal.TYPE_DUMB_COLOR) None
+    else {
+      val s = Option(Status.getStatus(terminal))
+      if (s.exists(_.toString.contains("supported=true"))) s else None
+    }
+  }
   @volatile private var activeSpinner: String = ""
   @volatile private var persistentStatus: String = ""
   @volatile private var activePanelLines: Vector[String] = Vector.empty
 
   private def redraw(): Unit = {
-    val parts = List(
-      Option(activeSpinner).filter(_.nonEmpty),
-      Option(persistentStatus).filter(_.nonEmpty)
-    ).flatten
     status.foreach { s =>
-      if (parts.isEmpty && activePanelLines.isEmpty) {
+      if (activeSpinner.isEmpty && persistentStatus.isEmpty && activePanelLines.isEmpty) {
         s.update(Collections.emptyList())
       } else {
         val lines = new java.util.ArrayList[AttributedString]()
-        if (parts.nonEmpty) {
-          val combined = parts.mkString(" | ")
-          lines.add(AttributedString.fromAnsi(s"\u001b[33m$combined\u001b[0m"))
+        val width = if (terminal.getColumns > 0) terminal.getColumns else 80
+
+        val leftBuilder = new AttributedStringBuilder()
+        if (activeSpinner.nonEmpty) {
+          leftBuilder.style(AttributedStyle.DEFAULT.foreground(AttributedStyle.YELLOW).bold())
+            .append(activeSpinner)
         }
+        if (activeSpinner.nonEmpty && persistentStatus.nonEmpty) {
+          leftBuilder.style(AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT | AttributedStyle.BLACK))
+            .append(" | ")
+        }
+        if (persistentStatus.nonEmpty) {
+          leftBuilder.style(AttributedStyle.DEFAULT.foreground(AttributedStyle.CYAN))
+            .append(persistentStatus)
+        }
+        val leftStr = leftBuilder.toAttributedString
+
+        val rightStr = new AttributedStringBuilder()
+          .style(AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT | AttributedStyle.BLACK))
+          .append("[Tark Agent TUI]")
+          .toAttributedString
+
+        val leftLen = activeSpinner.length + (if (activeSpinner.nonEmpty && persistentStatus.nonEmpty) 3 else 0) + persistentStatus.length
+        val rightLen = 16
+        val padding = Math.max(0, width - leftLen - rightLen)
+
+        val combined = new AttributedStringBuilder()
+          .append(leftStr)
+          .append(" " * padding)
+          .append(rightStr)
+          .toAttributedString
+
+        lines.add(combined)
+
         activePanelLines.foreach { line =>
           lines.add(AttributedString.fromAnsi(line))
         }
@@ -273,16 +261,39 @@ final class JLineCompleter(completionRef: Ref[IO, List[String]]) extends Complet
     words.filter(_.startsWith(buffer)).foreach(word => candidates.add(Candidate(word)))
   }
 
+import java.util.regex.Pattern
+
 final class AgentCommandHighlighter extends Highlighter:
+  private val COMMANDS = Pattern.compile("^/(help|clear|memory|run|exit)\\b")
+  private val FLAGS    = Pattern.compile("(?<=\\s|^)--?[a-zA-Z0-9_-]+\\b")
+  private val STRINGS  = Pattern.compile("\"[^\"]*\"|'[^']*'")
+  private val NUMBERS  = Pattern.compile("\\b\\d+(\\.\\d+)?\\b")
+  private val BRACKETS = Pattern.compile("[\\[\\](){}]")
+
   override def highlight(reader: LineReader, buffer: String): AttributedString = {
-    val builder = AttributedStringBuilder()
-    if buffer.startsWith("/") then {
-      val firstSpace = buffer.indexOf(' ')
-      val (cmd, args) = if firstSpace == -1 then (buffer, "") else buffer.splitAt(firstSpace)
-      builder.append(cmd, AttributedStyle.DEFAULT.foreground(AttributedStyle.YELLOW).bold())
-      builder.append(args, AttributedStyle.DEFAULT)
-    } else {
-      builder.append(buffer, AttributedStyle.DEFAULT)
+    val len = buffer.length
+    val styles = Array.fill[AttributedStyle](len)(AttributedStyle.DEFAULT)
+
+    def applyPattern(pattern: Pattern, style: AttributedStyle): Unit = {
+      val matcher = pattern.matcher(buffer)
+      while (matcher.find()) {
+        val start = matcher.start()
+        val end = matcher.end()
+        for (i <- start until end) {
+          styles(i) = style
+        }
+      }
+    }
+
+    applyPattern(BRACKETS, AttributedStyle.BOLD.foreground(AttributedStyle.MAGENTA))
+    applyPattern(NUMBERS, AttributedStyle.DEFAULT.foreground(AttributedStyle.BLUE))
+    applyPattern(STRINGS, AttributedStyle.DEFAULT.foreground(AttributedStyle.GREEN))
+    applyPattern(FLAGS, AttributedStyle.DEFAULT.foreground(AttributedStyle.CYAN))
+    applyPattern(COMMANDS, AttributedStyle.BOLD.foreground(AttributedStyle.YELLOW))
+
+    val builder = new AttributedStringBuilder()
+    for (i <- 0 until len) {
+      builder.append(buffer.charAt(i).toString, styles(i))
     }
     builder.toAttributedString
   }
@@ -310,7 +321,12 @@ final class JLineFrontend(
     val cleanInput = input.trim
     if cleanInput.isEmpty then IO.unit
     else
-      status.clearPanel() >>
+      val terminalOpt = writer match {
+        case jWriter: JLineTerminalWriter => Some(jWriter.terminal)
+        case _ => None
+      }
+
+      val execution = status.clearPanel() >>
         activePanelLinesRef.set(Vector.empty) >>
         backend.handleInput(cleanInput).evalMap { task =>
           task.description match {
@@ -319,21 +335,68 @@ final class JLineFrontend(
             case None =>
               executeActions(task.action)
           }
-        }.compile.drain.handleErrorWith { error =>
+        }.compile.drain
+
+      val finalExecution = if (cleanInput == "/exit") {
+        execution.handleErrorWith { error =>
+          writer.printSystemMessage(s"Exit warning (failed to summarize/persist): ${error.getMessage}", TerminalStyle.System)
+        } >> exitRequested.set(true)
+      } else {
+        execution.handleErrorWith { error =>
           writer.printAbove("System", s"Error: ${error.getMessage}", TerminalStyle.Error)
         }
+      }
+
+      terminalOpt match {
+        case Some(terminal) if terminal.getType != Terminal.TYPE_DUMB && terminal.getType != Terminal.TYPE_DUMB_COLOR =>
+          cats.effect.Deferred[IO, Unit].flatMap { cancelSig =>
+            val escListener: IO[Unit] = IO.blocking {
+              val reader = terminal.reader()
+              var cancelled = false
+              val originalAttributes = terminal.enterRawMode()
+              try {
+                while (!cancelled && !Thread.interrupted()) {
+                  val c = reader.peek(100) // 100ms non-blocking check
+                  if (c == 27 || c == 3) { // Esc (27) or Ctrl+C (3)
+                    reader.read() // consume matched key
+                    cancelled = true
+                  } else if (c > 0) {
+                    reader.read() // consume other keys typed during execution to keep next prompt clean
+                  } else if (c == -1) {
+                    cancelled = true // EOF
+                  } else if (c == -2) {
+                    Thread.sleep(10) // Small sleep to prevent CPU spinning on quick timeouts
+                  }
+                }
+              } finally {
+                terminal.setAttributes(originalAttributes)
+              }
+            }
+
+            for {
+              escFiber <- (escListener >> cancelSig.complete(()).void).start
+              res <- IO.race(finalExecution, cancelSig.get).flatMap {
+                case Left(_) =>
+                  // Normal execution completed. Block and wait for background fiber to cleanly restore terminal attributes.
+                  escFiber.cancel
+                case Right(_) =>
+                  // User pressed Esc or Ctrl+C. Cancel execution and display notice.
+                  val printNotice = if (cleanInput == "/exit") exitRequested.set(true) else IO.unit
+                  writer.printSystemMessage("Processing skipped by user (Esc pressed).", TerminalStyle.System) >> printNotice
+              }
+            } yield res
+          }
+
+        case _ =>
+          finalExecution
+      }
   }
 
-  private def executeActions(actions: Stream[IO, AgentAction[IO]]): IO[Unit] =
-    Ref.of[IO, Option[PanelState]](None).flatMap { panelStateRef =>
-      val cols = terminalWidth
-      val width = if (cols > 0) cols - 1 else config.panelWidth
-      val panelConfig = PanelConfig(
-        width = width,
-        borderStyle = BorderStyle.fromString(config.panelBorder),
-        maxLines = 7
-      )
+  private def executeActions(actions: Stream[IO, AgentAction[IO]]): IO[Unit] = {
+    val cols = terminalWidth
+    val width = if (cols > 0) cols - 1 else config.panelWidth
 
+    Ref.of[IO, Int](0).flatMap { linesPrintedRef =>
       Ref.of[IO, Boolean](false).flatMap { inlineOpen =>
         def closeInline: IO[Unit] =
           inlineOpen.get.ifM(writer.finishInline() >> inlineOpen.set(false), IO.unit)
@@ -343,6 +406,34 @@ final class JLineFrontend(
             writer.appendInline(text, TerminalStyle.Agent),
             writer.startInline("Agent", TerminalStyle.Agent) >> writer.appendInline(text, TerminalStyle.Agent) >> inlineOpen.set(true)
           )
+
+        val MaxOutputLines = 15
+
+        def printBorderedLine(text: String): IO[Unit] = {
+          val maxContentWidth = width - 4
+          if (maxContentWidth <= 0) writer.printLine(text)
+          else {
+            val lines = text.split("\n", -1).toList
+            val rawSlices = lines.flatMap { line =>
+              if (line.isEmpty) List("│ " + " " * maxContentWidth + " │")
+              else {
+                line.grouped(maxContentWidth).map { chunk =>
+                  "│ " + chunk.padTo(maxContentWidth, ' ').take(maxContentWidth) + " │"
+                }.toList
+              }
+            }
+
+            rawSlices.traverse { formattedLine =>
+              linesPrintedRef.get.flatMap { current =>
+                if (current < MaxOutputLines) {
+                  writer.printLine(formattedLine) >> linesPrintedRef.update(_ + 1)
+                } else {
+                  linesPrintedRef.update(_ + 1)
+                }
+              }
+            }.void
+          }
+        }
 
         actions.evalMap {
           case AgentAction.Log(text) =>
@@ -375,36 +466,39 @@ final class JLineFrontend(
               }
             else args
 
-            val state = PanelState(panelConfig, Vector(s"Tool: $name", s"Cmd: $displayInput"))
-            val rendered = summon[PanelRenderer[PanelState]].render(state)
-            panelStateRef.set(Some(state)) >>
-              activePanelLinesRef.set(rendered) >>
-              status.updatePanel(rendered)
+            val maxContentWidth = width - 4
+            val topBorder = "┌" + s"─ Tool: $name ".padTo(width - 2, '─').take(width - 2) + "┐"
+            val cmdLine = "│ " + s"Cmd: $displayInput".padTo(maxContentWidth, ' ').take(maxContentWidth) + " │"
+            val midBorder = "├" + "─ Output ".padTo(width - 2, '─').take(width - 2) + "┤"
+
+            closeInline >>
+              linesPrintedRef.set(0) >>
+              writer.printLine(topBorder) >>
+              writer.printLine(cmdLine) >>
+              writer.printLine(midBorder)
 
           case AgentAction.ToolCallOutput(text) =>
-            panelStateRef.get.flatMap {
-              case Some(state) =>
-                val updated = state.copy(contentLines = state.contentLines :+ s"Output: $text")
-                val rendered = summon[PanelRenderer[PanelState]].render(updated)
-                panelStateRef.set(Some(updated)) >>
-                  activePanelLinesRef.set(rendered) >>
-                  status.updatePanel(rendered)
-              case None =>
-                val state = PanelState(panelConfig, Vector(s"Output: $text"))
-                val rendered = summon[PanelRenderer[PanelState]].render(state)
-                panelStateRef.set(Some(state)) >>
-                  activePanelLinesRef.set(rendered) >>
-                  status.updatePanel(rendered)
-            }
+            printBorderedLine(text)
 
           case AgentAction.ToolCallEnd() =>
-            IO.unit
+            linesPrintedRef.get.flatMap { finalCount =>
+              val maxContentWidth = width - 4
+              val printTruncationNotice = if (finalCount > MaxOutputLines) {
+                val truncatedCount = finalCount - MaxOutputLines
+                val truncLine = "│ " + s"... [TRUNCATED $truncatedCount LINES]".padTo(maxContentWidth, ' ').take(maxContentWidth) + " │"
+                writer.printLine(truncLine)
+              } else IO.unit
+
+              val bottomBorder = "└" + ("─" * (width - 2)) + "┘"
+              printTruncationNotice >> writer.printLine(bottomBorder) >> linesPrintedRef.set(0)
+            }
 
           case AgentAction.RequestChoice(prompt, options, allowCustom, onSelected) =>
             closeInline >> reader.readChoice(prompt, options, allowCustom).flatMap(choice => executeActions(onSelected(choice)))
         }.compile.drain.guarantee(closeInline >> status.clearPanel())
       }
     }
+  }
 
   private def terminalWidth: Int =
     writer match {
@@ -419,7 +513,8 @@ final class JLineFrontend(
   def loop: IO[Unit] = {
     val initMessage =
       writer.printLine("\u001b[34;1m=== Tark Agent TUI Initialized ===\u001b[0m") >>
-        writer.printLine("Type your prompt or /help. Press Ctrl+D or type /exit to close.\n") >>
+        writer.printLine("Type your prompt or /help. Press Ctrl+D or type /exit to close.") >>
+        writer.printLine("\u001b[90m* Hint: Press ESC or Ctrl+C at any time during active processing to interrupt and return to the prompt.\u001b[0m\n") >>
         writer.flush()
 
     def promptLoop: IO[Unit] = {
@@ -469,6 +564,25 @@ object JLineFrontend:
 
         val autosuggestions = org.jline.widget.AutosuggestionWidgets(lineReader)
         autosuggestions.enable()
+
+        val emptyArgs = new java.util.ArrayList[org.jline.console.ArgDesc]()
+        val emptyOpts = new java.util.HashMap[String, java.util.List[AttributedString]]()
+
+        val tailTips = new java.util.HashMap[String, org.jline.console.CmdDesc]()
+        tailTips.put("/help", new org.jline.console.CmdDesc(java.util.Arrays.asList(AttributedString.fromAnsi("Display help information")), emptyArgs, emptyOpts))
+        tailTips.put("/clear", new org.jline.console.CmdDesc(java.util.Arrays.asList(AttributedString.fromAnsi("Summarize session history and clear terminal screen")), emptyArgs, emptyOpts))
+        tailTips.put("/memory", new org.jline.console.CmdDesc(java.util.Arrays.asList(AttributedString.fromAnsi("Show the current multi-layered episodic/working memory state")), emptyArgs, emptyOpts))
+        tailTips.put("/exit", new org.jline.console.CmdDesc(java.util.Arrays.asList(AttributedString.fromAnsi("Summarize, persist session, and exit the shell")), emptyArgs, emptyOpts))
+
+        val runOpts = new java.util.HashMap[String, java.util.List[AttributedString]]()
+        tailTips.put("/run", new org.jline.console.CmdDesc(
+          java.util.Arrays.asList(AttributedString.fromAnsi("Execute a terminal/shell command inside the agent's sandbox")),
+          java.util.Arrays.asList(new org.jline.console.ArgDesc("<command>")),
+          runOpts
+        ))
+
+        val tailtipWidgets = new org.jline.widget.TailTipWidgets(lineReader, tailTips, 5, org.jline.widget.TailTipWidgets.TipType.COMPLETER)
+        tailtipWidgets.enable()
 
         (terminal, lineReader)
       }

@@ -54,51 +54,70 @@ final class DefaultAgentBackend[F[_]: Sync] private (
       if (hasGoal) {
         runStandardConversation(session, input)
       } else {
-        Stream.eval(goalContractParser.parseGoal(input)).flatMap { contract =>
-          Stream.eval(taskPlanner.generatePlan(contract)).flatMap { plan =>
-            Stream.eval(planVerifier.verifyPlan(contract, plan)).flatMap { isValid =>
-              val planWorkflowStream = if (isValid) {
-                Stream.emit((plan, List.empty[String]))
-              } else {
-                // If invalid, invoke the planner again for a self-refined plan
-                Stream.eval(taskPlanner.generatePlan(contract)).map { refined =>
-                  (refined, List(s"[Intake] [WARNING] Plan failed verification. Executed plan-refinement pass."))
+        // Create an instant intake task so the spinner starts immediately!
+        val intakeTask = AgentTask(
+          description = Some("[Intake] Analyzing goal and generating plan"),
+          action = Stream.eval(goalContractParser.parseGoal(input)).flatMap { contract =>
+            Stream.eval(taskPlanner.generatePlan(contract)).flatMap { plan =>
+              Stream.eval(planVerifier.verifyPlan(contract, plan)).flatMap { isValid =>
+                val planWorkflowStream = if (isValid) {
+                  Stream.emit((plan, List.empty[String]))
+                } else {
+                  Stream.eval(taskPlanner.generatePlan(contract)).map { refined =>
+                    (refined, List(s"[Intake] [WARNING] Plan failed verification. Executed plan-refinement pass."))
+                  }
                 }
-              }
 
-              planWorkflowStream.flatMap { case (finalPlan, warnings) =>
-                val updatedContext = session.context.updateAgentState(state =>
-                  state.withGoalContract(contract).withPlan(finalPlan).copy(currentStep = 0)
-                )
-                val updatedSession = session.copy(context = updatedContext)
+                planWorkflowStream.flatMap { case (finalPlan, warnings) =>
+                  val updatedContext = session.context.updateAgentState(state =>
+                    state.withGoalContract(contract).withPlan(finalPlan).copy(currentStep = 0)
+                  )
+                  val updatedSession = session.copy(context = updatedContext)
 
-                val contractMessages = List(
-                  s"[Intake] Goal established: ${contract.goal}",
-                  s"[Intake] Deliverable: ${contract.deliverable}"
-                ) ++ Option.when(contract.constraints.nonEmpty)(s"[Intake] Constraints: ${contract.constraints.mkString(", ")}")
+                  val contractMessages = List(
+                    s"[Intake] Goal established: ${contract.goal}",
+                    s"[Intake] Deliverable: ${contract.deliverable}"
+                  ) ++ Option.when(contract.constraints.nonEmpty)(s"[Intake] Constraints: ${contract.constraints.mkString(", ")}")
 
-                val planMessages = if (finalPlan.nonEmpty) {
-                  s"[Intake] Generated Plan:" :: finalPlan.map(step => s"  * $step")
-                } else Nil
+                  val planMessages = if (finalPlan.nonEmpty) {
+                    s"[Intake] Generated Plan:" :: finalPlan.map(step => s"  * $step")
+                  } else List("[Intake] No plan generated.")
 
-                val notificationStream = Stream.emits((contractMessages ++ warnings ++ planMessages).map(msg => AgentAction.SystemMessage[F](msg)))
+                  val notifyWarnings = Stream.emits(warnings.map(AgentAction.SystemMessage[F](_)))
+                  val notifyContract = Stream.emits(contractMessages.map(AgentAction.SystemMessage[F](_)))
+                  val notifyPlan = Stream.emits(planMessages.map(AgentAction.SystemMessage[F](_)))
 
-                val intakeTask = AgentTask(
-                  description = Some("Goal Intake Complete"),
-                  action = Stream.eval(sessionRef.set(updatedSession)).drain ++ notificationStream
-                )
+                  val persist = Stream.eval(
+                    sink.write(updatedContext, session.sessionPath) >> sessionRef.set(updatedSession)
+                  ).drain
 
-                Stream.emit(intakeTask) ++ runStandardConversation(updatedSession, input)
+                  notifyWarnings ++ notifyContract ++ notifyPlan ++ persist ++
+                    runStandardConversation(updatedSession, input).flatMap(_.action)
+                }
               }
             }
           }
-        }
+        )
+        Stream.emit(intakeTask)
       }
     }
 
+  private def pruneHistory(messages: List[OpenAIMessage]): List[OpenAIMessage] = {
+    val (systemMsgs, nonSystemMsgs) = messages.partition(_.role == "system")
+    val maxHistoryMessages = 8
+    val keptHistory = if (nonSystemMsgs.length > maxHistoryMessages) {
+      nonSystemMsgs.takeRight(maxHistoryMessages)
+    } else {
+      nonSystemMsgs
+    }
+    systemMsgs ++ keptHistory
+  }
+
   private def runStandardConversation(session: Session, input: String): Stream[F, AgentTask[F]] = {
     val userMessage = OpenAIMessage(role = "user", content = Some(input))
-    val initialMessages = historyMessages(session.context) :+ userMessage
+    val history = historyMessages(session.context)
+    val prunedHistory = pruneHistory(history)
+    val initialMessages = prunedHistory :+ userMessage
 
     Stream.eval(Ref.of[F, Option[ConversationResult]](None)).flatMap { resultRef =>
       reactEngine.runConversation(session.context, initialMessages, depth = 0, Vector.empty, resultRef) ++
@@ -155,55 +174,74 @@ final class DefaultAgentBackend[F[_]: Sync] private (
     val currentAgentState = context.memory.working.getOrElse(AgentState())
     val F = summon[Sync[F]]
 
-    // 1. Evaluate task step progression
+    val isMaxToolCallsExceeded = result.finalAnswer.exists(_.contains("Maximum tool call"))
+
+    // 1. Evaluate task step progression (skip if limit was exceeded)
     val activeStepOpt = currentAgentState.plan.lift(currentAgentState.currentStep)
-    val progressionF = activeStepOpt match {
-      case Some(activeStep) =>
-        val progressCtx = ProgressContext(currentAgentState.goal, activeStep, result.messages)
-        progressTracker.evaluateProgress(progressCtx).map { completed =>
-          if (completed) {
-            val nextStep = currentAgentState.currentStep + 1
-            val updatedCompleted = currentAgentState.completedSteps :+ activeStep
-            (nextStep, updatedCompleted, Some(s"[Progression] Checked off: $activeStep"))
-          } else {
-            (currentAgentState.currentStep, currentAgentState.completedSteps, None)
+    val progressionF = if (isMaxToolCallsExceeded) {
+      F.pure((currentAgentState.currentStep, currentAgentState.completedSteps, None))
+    } else {
+      activeStepOpt match {
+        case Some(activeStep) =>
+          val progressCtx = ProgressContext(currentAgentState.goal, activeStep, result.messages)
+          progressTracker.evaluateProgress(progressCtx).map { completed =>
+            if (completed) {
+              val nextStep = currentAgentState.currentStep + 1
+              val updatedCompleted = currentAgentState.completedSteps :+ activeStep
+              (nextStep, updatedCompleted, Some(s"[Progression] Checked off: $activeStep"))
+            } else {
+              (currentAgentState.currentStep, currentAgentState.completedSteps, None)
+            }
           }
-        }
-      case None =>
-        F.pure((currentAgentState.currentStep, currentAgentState.completedSteps, None))
-    }
-
-    // 2. Perform context distillation
-    val distilledMessagesF = result.messages.traverse { msg =>
-      // Find matching tool call in assistant messages to check original command arguments
-      val associatedToolCall = result.messages.flatMap(_.tool_calls.getOrElse(Nil)).find(_.id == msg.tool_call_id.getOrElse(""))
-      val inputArgs = associatedToolCall.map(_.function.arguments).getOrElse("")
-
-      if (msg.role == "tool" && config.enableDistillation && msg.content.exists(_.length > config.distillationThreshold) && shouldDistill(inputArgs, msg.content.getOrElse(""))) {
-        val toolCall = associatedToolCall.getOrElse(ToolCall(msg.tool_call_id.getOrElse(""), "function", ToolCallFunction("unknown", "")))
-        contextDistiller.distill(context, toolCall, msg.content.get).map { distilled =>
-          msg.copy(content = Some(distilled))
-        }
-      } else {
-        Sync[F].pure(msg)
+        case None =>
+          F.pure((currentAgentState.currentStep, currentAgentState.completedSteps, None))
       }
     }
 
-    val distilledInteractionsF = result.interactions.traverse { interaction =>
-      if (config.enableDistillation && interaction.output.length > config.distillationThreshold && shouldDistill(interaction.input, interaction.output)) {
-        val toolCall = ToolCall(interaction.id, "function", ToolCallFunction(interaction.toolName, interaction.input))
-        contextDistiller.distill(context, toolCall, interaction.output).map { distilled =>
-          interaction.copy(output = distilled)
-        }
-      } else {
-        Sync[F].pure(interaction)
-      }
-    }
+    // 2. Perform budget-aware, de-duplicated distillation
+    val totalChars = result.messages.flatMap(_.content).map(_.length).sum
+    val estimatedTokens = totalChars / 4
+    val pressureThreshold = (config.contextWindowSize * 0.75).toInt
+
+    val shouldTriggerDistillation = config.enableDistillation && !isMaxToolCallsExceeded && (estimatedTokens > pressureThreshold)
 
     for {
       (nextStep, nextCompleted, progressionMsgOpt) <- progressionF
-      distilledMessages <- distilledMessagesF
-      distilledInteractions <- distilledInteractionsF
+      (distilledMessages, distilledInteractions) <- if (shouldTriggerDistillation) {
+        // Group by tool_call_id to ensure we only distill unique tool outputs once
+        val uniqueToolMessages = result.messages.filter { msg =>
+          val associatedToolCall = result.messages.flatMap(_.tool_calls.getOrElse(Nil)).find(_.id == msg.tool_call_id.getOrElse(""))
+          val inputArgs = associatedToolCall.map(_.function.arguments).getOrElse("")
+          msg.role == "tool" && msg.content.exists(_.length > config.distillationThreshold) && shouldDistill(inputArgs, msg.content.getOrElse(""))
+        }.groupBy(_.tool_call_id.getOrElse("")).map(_._2.head).toList
+
+        uniqueToolMessages.traverse { msg =>
+          val associatedToolCall = result.messages.flatMap(_.tool_calls.getOrElse(Nil)).find(_.id == msg.tool_call_id.getOrElse(""))
+          val toolCall = associatedToolCall.getOrElse(ToolCall(msg.tool_call_id.getOrElse(""), "function", ToolCallFunction("unknown", "")))
+          contextDistiller.distill(context, toolCall, msg.content.get).map { distilled =>
+            msg.tool_call_id.getOrElse("") -> distilled
+          }
+        }.map(_.toMap).map { distillationMap =>
+          val messages = result.messages.map { msg =>
+            if (msg.role == "tool") {
+              val toolId = msg.tool_call_id.getOrElse("")
+              distillationMap.get(toolId) match {
+                case Some(distilled) => msg.copy(content = Some(distilled))
+                case None => msg
+              }
+            } else msg
+          }
+          val interactions = result.interactions.map { interaction =>
+            distillationMap.get(interaction.id) match {
+              case Some(distilled) => interaction.copy(output = distilled)
+              case None => interaction
+            }
+          }
+          (messages, interactions)
+        }
+      } else {
+        F.pure((result.messages, result.interactions))
+      }
       isAllDone = currentAgentState.plan.nonEmpty && nextStep >= currentAgentState.plan.length
       nextAgentState = currentAgentState.copy(
         messages = distilledMessages,

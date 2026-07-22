@@ -142,5 +142,5 @@ final class ReActLoopEngine[F[_]: Sync](
 }
 
 object ReActLoopEngine {
-  private val MaxToolDepth = 10
+  private val MaxToolDepth = 20
 }

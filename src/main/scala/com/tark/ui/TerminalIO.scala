@@ -18,3 +18,4 @@ trait TerminalWriter[F[_]]:
   def printLine(message: String): F[Unit]
   def clearScreen(): F[Unit]
   def flush(): F[Unit]
+  def printPanel(panelText: String): F[Unit] = printLine(panelText)
