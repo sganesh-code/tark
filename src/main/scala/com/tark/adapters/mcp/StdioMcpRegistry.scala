@@ -81,10 +81,21 @@ object StdioMcpRegistry {
                   .env(env.asJava)
                   .build()
 
-                val mapper = io.modelcontextprotocol.json.McpJsonDefaults.getMapper()
+                val mapper = io.modelcontextprotocol.json.McpJsonDefaults.getMapper
                 val transport = new StdioClientTransport(params, mapper)
+                val logPath = java.nio.file.Paths.get(".tark", "mcp.log")
                 transport.setStdErrorHandler { line =>
-                  System.err.println(s"[$serverName stderr] $line")
+                  val truncatedLine = if (line.length > 300) line.take(300) + "..." else line
+                  try {
+                    java.nio.file.Files.writeString(
+                      logPath,
+                      s"[${java.time.Instant.now()}] [$serverName] $truncatedLine\n",
+                      java.nio.file.StandardOpenOption.CREATE,
+                      java.nio.file.StandardOpenOption.APPEND
+                    )
+                  } catch {
+                    case _: Throwable => ()
+                  }
                 }
                 val client = JavaMcpClient.sync(transport)
                   .requestTimeout(Duration.ofSeconds(10))
