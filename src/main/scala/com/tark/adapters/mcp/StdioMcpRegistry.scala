@@ -124,8 +124,40 @@ object StdioMcpRegistry {
                     throw initError
                 }
 
-              case McpServer.Remote(_, _) =>
-                println(s"[INFO] Remote MCP servers are not supported over Stdio transport.")
+              case McpServer.Remote(transportType, url) =>
+                if (transportType.toLowerCase == "sse") {
+                  println(s"[INFO] Connecting to remote SSE MCP server: '$serverName' ($url)")
+                  val mapper = io.modelcontextprotocol.json.McpJsonDefaults.getMapper()
+                  val transport = io.modelcontextprotocol.client.transport.HttpClientSseClientTransport.builder(url).build()
+                  val client = JavaMcpClient.sync(transport)
+                    .requestTimeout(Duration.ofSeconds(15))
+                    .build()
+
+                  try {
+                    client.initialize()
+                    val toolsResult = client.listTools()
+                    toolsResult.tools().asScala.foreach { javaTool =>
+                      val schemaString = mapper.writeValueAsString(javaTool.inputSchema())
+                      val schemaJson = io.circe.parser.parse(schemaString).getOrElse(io.circe.Json.obj())
+                      val mcpToolDef = com.tark.domain.tool.McpToolDefinition(
+                        name = javaTool.name(),
+                        description = javaTool.description(),
+                        parameters = com.tark.domain.tool.OpenAIFunctionParams.Custom(schemaJson)
+                      )
+                      toolMap = toolMap + (javaTool.name() -> client)
+                      toolList = mcpToolDef :: toolList
+                    }
+
+                    startedClients = client :: startedClients
+                    clientMap = clientMap + (serverName -> client)
+                  } catch {
+                    case initError: Throwable =>
+                      try { client.closeGracefully() } catch { case _: Throwable => () }
+                      throw initError
+                  }
+                } else {
+                  println(s"[WARN] Unsupported remote transport type '$transportType' for server '$serverName'")
+                }
             }
           } catch {
             case ex: Throwable =>
