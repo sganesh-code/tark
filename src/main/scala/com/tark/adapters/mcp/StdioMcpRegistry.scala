@@ -72,39 +72,44 @@ object StdioMcpRegistry {
 
       try {
         mcpServers.mcpServers.foreach { case (serverName, serverConfig) =>
-          serverConfig match {
-            case McpServer.Command(command, args, env) =>
-              println(s"[INFO] Starting MCP server process: '$serverName' ($command)")
-              val params = ServerParameters.builder(command)
-                .args(args.asJava)
-                .env(env.asJava)
-                .build()
+          try {
+            serverConfig match {
+              case McpServer.Command(command, args, env) =>
+                println(s"[INFO] Starting MCP server process: '$serverName' ($command)")
+                val params = ServerParameters.builder(command)
+                  .args(args.asJava)
+                  .env(env.asJava)
+                  .build()
 
-              val mapper = io.modelcontextprotocol.json.McpJsonDefaults.getMapper()
-              val transport = new StdioClientTransport(params, mapper)
-              val client = JavaMcpClient.sync(transport)
-                .requestTimeout(Duration.ofSeconds(15))
-                .build()
+                val mapper = io.modelcontextprotocol.json.McpJsonDefaults.getMapper()
+                val transport = new StdioClientTransport(params, mapper)
+                val client = JavaMcpClient.sync(transport)
+                  .requestTimeout(Duration.ofSeconds(10))
+                  .build()
 
-              client.initialize()
-              startedClients = client :: startedClients
-              clientMap = clientMap + (serverName -> client)
+                client.initialize()
+                startedClients = client :: startedClients
+                clientMap = clientMap + (serverName -> client)
 
-              val toolsResult = client.listTools()
-              toolsResult.tools().asScala.foreach { javaTool =>
-                val schemaString = mapper.writeValueAsString(javaTool.inputSchema())
-                val schemaJson = io.circe.parser.parse(schemaString).getOrElse(io.circe.Json.obj())
-                val mcpToolDef = com.tark.domain.tool.McpToolDefinition(
-                  name = javaTool.name(),
-                  description = javaTool.description(),
-                  parameters = com.tark.domain.tool.OpenAIFunctionParams.Custom(schemaJson)
-                )
-                toolMap = toolMap + (javaTool.name() -> client)
-                toolList = mcpToolDef :: toolList
-              }
+                val toolsResult = client.listTools()
+                toolsResult.tools().asScala.foreach { javaTool =>
+                  val schemaString = mapper.writeValueAsString(javaTool.inputSchema())
+                  val schemaJson = io.circe.parser.parse(schemaString).getOrElse(io.circe.Json.obj())
+                  val mcpToolDef = com.tark.domain.tool.McpToolDefinition(
+                    name = javaTool.name(),
+                    description = javaTool.description(),
+                    parameters = com.tark.domain.tool.OpenAIFunctionParams.Custom(schemaJson)
+                  )
+                  toolMap = toolMap + (javaTool.name() -> client)
+                  toolList = mcpToolDef :: toolList
+                }
 
-            case McpServer.Remote(_, _) =>
-              println(s"[INFO] Remote MCP servers are not supported over Stdio transport.")
+              case McpServer.Remote(_, _) =>
+                println(s"[INFO] Remote MCP servers are not supported over Stdio transport.")
+            }
+          } catch {
+            case ex: Throwable =>
+              System.err.println(s"[WARN] Failed to initialize MCP server '$serverName': ${ex.getMessage}")
           }
         }
         (clientMap, toolMap, toolList, startedClients)
