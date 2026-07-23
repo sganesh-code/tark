@@ -90,21 +90,27 @@ object StdioMcpRegistry {
                   .requestTimeout(Duration.ofSeconds(10))
                   .build()
 
-                client.initialize()
-                startedClients = client :: startedClients
-                clientMap = clientMap + (serverName -> client)
+                try {
+                  client.initialize()
+                  val toolsResult = client.listTools()
+                  toolsResult.tools().asScala.foreach { javaTool =>
+                    val schemaString = mapper.writeValueAsString(javaTool.inputSchema())
+                    val schemaJson = io.circe.parser.parse(schemaString).getOrElse(io.circe.Json.obj())
+                    val mcpToolDef = com.tark.domain.tool.McpToolDefinition(
+                      name = javaTool.name(),
+                      description = javaTool.description(),
+                      parameters = com.tark.domain.tool.OpenAIFunctionParams.Custom(schemaJson)
+                    )
+                    toolMap = toolMap + (javaTool.name() -> client)
+                    toolList = mcpToolDef :: toolList
+                  }
 
-                val toolsResult = client.listTools()
-                toolsResult.tools().asScala.foreach { javaTool =>
-                  val schemaString = mapper.writeValueAsString(javaTool.inputSchema())
-                  val schemaJson = io.circe.parser.parse(schemaString).getOrElse(io.circe.Json.obj())
-                  val mcpToolDef = com.tark.domain.tool.McpToolDefinition(
-                    name = javaTool.name(),
-                    description = javaTool.description(),
-                    parameters = com.tark.domain.tool.OpenAIFunctionParams.Custom(schemaJson)
-                  )
-                  toolMap = toolMap + (javaTool.name() -> client)
-                  toolList = mcpToolDef :: toolList
+                  startedClients = client :: startedClients
+                  clientMap = clientMap + (serverName -> client)
+                } catch {
+                  case initError: Throwable =>
+                    try { client.closeGracefully() } catch { case _: Throwable => () }
+                    throw initError
                 }
 
               case McpServer.Remote(_, _) =>
