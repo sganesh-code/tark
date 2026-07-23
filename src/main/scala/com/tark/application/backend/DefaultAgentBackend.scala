@@ -9,7 +9,8 @@ import com.tark.domain.{AgentState, Config, GoalContract, ProgressContext}
 import com.tark.ports.AgentBackend
 import com.tark.ports.outbound.backend.*
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
-import com.tark.ports.outbound.tool.{CommandExecutor, DefaultToolCallExecutor}
+import com.tark.ports.outbound.tool.{CommandExecutor, ToolCallExecutor}
+import com.tark.ports.outbound.tool.ToolCallExecutor.given
 import com.tark.ports.shared.serialization.Sink
 import com.tark.ui.{AgentAction, AgentTask}
 import fs2.Stream
@@ -282,7 +283,7 @@ object DefaultAgentBackend {
       updateRef <- Ref.of[F, List[String] => F[Unit]](_ => Sync[F].unit)
       usageRef <- Ref.of[F, OpenAIUsage](OpenAIUsage(0, 0, 0))
       streamingHandler = StreamingResponseHandler[F](streamingLlmClient, llmClient, usageRef, config)
-      toolCallExecutor = DefaultToolCallExecutor[F](commandExecutor)
+      toolCallExecutor = summon[ToolCallExecutor[F, com.tark.domain.tool.ToolDefinition]]
       contextDistiller = ContextDistiller[F](llmClient)
       reactEngine = ReActLoopEngine[F](streamingHandler, toolCallExecutor, clock, config)
     } yield DefaultAgentBackend(sessionRef, updateRef, usageRef, reactEngine, goalContractParser, taskPlanner, planVerifier, progressTracker, contextDistiller, config)

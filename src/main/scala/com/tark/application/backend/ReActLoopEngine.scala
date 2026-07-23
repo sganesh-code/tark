@@ -3,8 +3,7 @@ package com.tark.application.backend
 import cats.effect.{Ref, Sync}
 import cats.syntax.all.*
 import com.tark.application.time.Clock
-import com.tark.domain.Config
-import com.tark.domain.Interaction
+import com.tark.domain.{Config, Interaction, Prompt}
 import com.tark.domain.context.Context
 import com.tark.domain.tool.{OpenAIMessage, ToolCall, ToolResult}
 import com.tark.ports.outbound.backend.*
@@ -23,13 +22,17 @@ final case class ConversationResult(
  * as defined in agent_harness_research_grounding.md. Responsibility for mapping,
  * compilation, and formatting operations is entirely delegated to unified, generic typeclasses.
  */
+import com.tark.ports.outbound.tool.ToolCallExecutor.*
+
 final class ReActLoopEngine[F[_]: Sync](
   streamingHandler: StreamingResponseHandler[F],
-  toolCallExecutor: ToolCallExecutor[F],
+  toolCallExecutor: ToolCallExecutor[F, com.tark.domain.tool.ToolDefinition],
   clock: Clock[F],
   config: Config
 ) {
   import ReActLoopEngine.*
+
+  given ToolCallExecutor[F, com.tark.domain.tool.ToolDefinition] = toolCallExecutor
 
   def runConversation(
     context: Context,
@@ -77,7 +80,12 @@ final class ReActLoopEngine[F[_]: Sync](
                 Stream.eval(
                   response.results.traverse { toolCall =>
                     Ref.of[F, Option[ToolResult]](None).map { resultRef =>
-                      val toolActionStream = toolCallExecutor.execute(context, toolCall, resultRef)
+                      val toolActionStream = context.tools.find(_.function.name == toolCall.function.name) match {
+                        case Some(toolDef) =>
+                          toolDef.execute(context, toolCall, resultRef)
+                        case None =>
+                          Stream.eval(resultRef.set(Some(ToolResult(s"Tool '${toolCall.function.name}' is not available.")))).drain
+                      }
                       summon[ToolTaskBuilder[F]].buildTask(
                         toolCall,
                         toolActionStream,

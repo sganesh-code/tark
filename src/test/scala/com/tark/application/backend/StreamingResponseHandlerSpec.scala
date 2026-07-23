@@ -2,6 +2,7 @@ package com.tark.application.backend
 
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import com.tark.domain.Prompt
 import com.tark.domain.tool.{OpenAIUsage, ToolCall}
 import com.tark.ports.outbound.backend.*
 import com.tark.ui.AgentAction

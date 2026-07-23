@@ -4,7 +4,8 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.tark.domain.GoalContract
 import com.tark.domain.tool.OpenAIUsage
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, Prompt}
+import com.tark.domain.Prompt
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient}
 import munit.FunSuite
 
 class OllamaGoalContractParserSpec extends FunSuite {

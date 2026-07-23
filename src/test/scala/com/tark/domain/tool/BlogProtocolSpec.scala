@@ -27,7 +27,7 @@ class BlogProtocolSpec extends FunSuite {
   }
 
   test("ToolDefinition supports Blog command_executor schema") {
-    val definition = ToolDefinition(
+    val definition: ToolDefinition = ToolDefinition.Simple(
       `type` = "function",
       function = OpenAIFunction(
         name = "command_executor",

@@ -26,10 +26,20 @@ case class OpenAIFunction(
   parameters: OpenAIFunctionParams
 )
 
-case class ToolDefinition(
-  `type`: String,
-  function: OpenAIFunction
-)
+sealed trait ToolDefinition {
+  def `type`: String
+  def function: OpenAIFunction
+}
+
+case class McpToolDefinition(
+  name: String,
+  description: String,
+  parameters: OpenAIFunctionParams
+) extends ToolDefinition {
+
+  override val `type`: String = "function"
+  override val function: OpenAIFunction = OpenAIFunction(name, description, parameters)
+}
 
 case class StreamOptions(include_usage: Boolean)
 
@@ -102,8 +112,62 @@ object OpenAIFunction {
 }
 
 object ToolDefinition {
-  given Encoder[ToolDefinition] = deriveEncoder
-  given Decoder[ToolDefinition] = deriveDecoder
+  case object Command extends ToolDefinition {
+    override val `type`: String = "function"
+    override val function: OpenAIFunction = OpenAIFunction(
+      name = "command_executor",
+      description = "Execute linux shell commands inside the configured sandbox",
+      parameters = OpenAIFunctionParams.Str(
+        description = "JSON object containing a command field with the full command to execute"
+      )
+    )
+  }
+
+  case object Questionnaire extends ToolDefinition {
+    override val `type`: String = "function"
+    override val function: OpenAIFunction = OpenAIFunction(
+      name = "questionnaire",
+      description = "Present a questionnaire/question with several options to the user and receive their selection to proceed.",
+      parameters = OpenAIFunctionParams.Custom(
+        Json.obj(
+          "type" -> Json.fromString("object"),
+          "properties" -> Json.obj(
+            "question" -> Json.obj(
+              "type" -> Json.fromString("string"),
+              "description" -> Json.fromString("The question or instruction to present to the user.")
+            ),
+            "options" -> Json.obj(
+              "type" -> Json.fromString("array"),
+              "items" -> Json.obj(
+                "type" -> Json.fromString("string")
+              ),
+              "description" -> Json.fromString("List of answer options for the user to select from. Must not be empty.")
+            )
+          ),
+          "required" -> Json.arr(Json.fromString("question"), Json.fromString("options"))
+        )
+      )
+    )
+  }
+
+  case class Simple(
+    `type`: String,
+    function: OpenAIFunction
+  ) extends ToolDefinition
+
+  given Encoder[ToolDefinition] = Encoder.instance { tool =>
+    Json.obj(
+      "type" -> Json.fromString(tool.`type`),
+      "function" -> tool.function.asJson
+    )
+  }
+
+  given Decoder[ToolDefinition] = Decoder.instance { cursor =>
+    for {
+      t <- cursor.get[String]("type")
+      f <- cursor.get[OpenAIFunction]("function")
+    } yield Simple(t, f)
+  }
 }
 
 object StreamOptions {

@@ -7,7 +7,9 @@ import com.tark.domain.context.Context
 import com.tark.domain.memory.Memory
 import com.tark.domain.tool.{OpenAIMessage, ToolCall, ToolCallFunction, ToolResult, OpenAIUsage}
 import com.tark.ports.outbound.backend.*
-import com.tark.ports.outbound.tool.{CommandExecutor, DefaultToolCallExecutor, ToolCallExecutor}
+import com.tark.domain.Prompt
+import com.tark.ports.outbound.tool.{CommandExecutor, ToolCallExecutor}
+import com.tark.ports.outbound.tool.ToolCallExecutor.given
 import com.tark.ui.AgentAction
 import munit.FunSuite
 
@@ -31,7 +33,7 @@ class ReActLoopEngineSpec extends FunSuite {
     val config = com.tark.domain.Config.default
     val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef, config)
     
-    val executor = new CommandExecutor[IO] {
+    given executor: CommandExecutor[IO] with {
       override def definition = null
       override def execute(context: Context, toolCall: ToolCall) = IO.raiseError(new AssertionError("no tools"))
     }
@@ -40,7 +42,7 @@ class ReActLoopEngineSpec extends FunSuite {
       override def realTimeMillis = IO.pure(12345L)
     }
 
-    val toolCallExecutor = new DefaultToolCallExecutor[IO](executor)
+    val toolCallExecutor = summon[ToolCallExecutor[IO, com.tark.domain.tool.ToolDefinition]]
     val distiller = new ContextDistiller[IO](llmClient)
     val engine = new ReActLoopEngine[IO](handler, toolCallExecutor, clock, config)
     val context = Context(List.empty, Memory(), List.empty)
@@ -116,7 +118,7 @@ class ReActLoopEngineSpec extends FunSuite {
     val config = com.tark.domain.Config.default
     val handler = new StreamingResponseHandler[IO](streamingClient, llmClient, usageRef, config)
 
-    val executor = new CommandExecutor[IO] {
+    given executor: CommandExecutor[IO] with {
       override def definition = null
       override def execute(context: Context, toolCall: ToolCall) = IO.raiseError(new AssertionError("command executor should not be called"))
     }
@@ -125,10 +127,10 @@ class ReActLoopEngineSpec extends FunSuite {
       override def realTimeMillis = IO.pure(12345L)
     }
 
-    val toolCallExecutor = new DefaultToolCallExecutor[IO](executor)
+    val toolCallExecutor = summon[ToolCallExecutor[IO, com.tark.domain.tool.ToolDefinition]]
     val distiller = new ContextDistiller[IO](llmClient)
     val engine = new ReActLoopEngine[IO](handler, toolCallExecutor, clock, config)
-    val context = Context(List.empty, Memory(), List.empty)
+    val context = Context(List(com.tark.domain.tool.ToolDefinition.Questionnaire), Memory(), List.empty)
     val messages = List(OpenAIMessage(role = "user", content = Some("Interactive prompt")))
     val resultRef = Ref.unsafe[IO, Option[ConversationResult]](None)
 

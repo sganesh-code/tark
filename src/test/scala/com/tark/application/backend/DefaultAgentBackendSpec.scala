@@ -9,7 +9,8 @@ import com.tark.domain.memory.{EpisodeSummary, Memory}
 import com.tark.domain.tool.{OpenAIFunction, OpenAIFunctionParams, OpenAIUsage, ToolCall, ToolCallFunction, ToolDefinition, ToolResult, OpenAIMessage}
 import com.tark.domain.Interaction
 import com.tark.ports.AgentBackend
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient, GoalContractParser, TaskPlanner, PlanVerifier, ProgressTracker}
+import com.tark.domain.Prompt
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, StreamingLlmClient, GoalContractParser, TaskPlanner, PlanVerifier, ProgressTracker}
 import com.tark.domain.{GoalContract, AgentState, ProgressContext}
 import com.tark.ports.outbound.memory.EpisodicMemorySummarizer
 import com.tark.ports.outbound.tool.CommandExecutor
@@ -44,15 +45,7 @@ class DefaultAgentBackendSpec extends FunSuite {
       IO.pure(false) // default to false so other tests bypass progression checks
   }
 
-  private val commandTool =
-    ToolDefinition(
-      `type` = "function",
-      function = OpenAIFunction(
-        name = "command_executor",
-        description = "Execute a command",
-        parameters = OpenAIFunctionParams.Str(description = "command")
-      )
-    )
+  private val commandTool = ToolDefinition.Command
 
   test("plain assistant response emits action stream and persists AgentState messages") {
     var written: Option[Context] = None
