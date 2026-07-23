@@ -1,18 +1,14 @@
 package com.tark.ports.outbound.backend
 
 import cats.Monad
-import com.tark.domain.tool.{OpenAIMessage, OpenAIUsage, ToolCall, ToolDefinition}
+import com.tark.domain.Prompt
+import com.tark.domain.tool.{OpenAIUsage, ToolCall}
 import fs2.Stream
 import io.circe.parser
 
 trait LLMClient[F[_]: Monad, I, A]:
   def chat(prompt: I): F[A]
   def streaming: Option[StreamingLlmClient[F]] = None
-
-case class Prompt(
-  messages: List[OpenAIMessage],
-  availableTools: List[ToolDefinition]
-)
 
 case class LLMResponse[A](
   content: String,

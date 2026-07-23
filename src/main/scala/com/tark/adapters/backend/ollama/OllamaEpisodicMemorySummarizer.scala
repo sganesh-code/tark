@@ -2,10 +2,10 @@ package com.tark.adapters.backend.ollama
 
 import cats.effect.Sync
 import cats.syntax.all.*
-import com.tark.domain.Interaction
+import com.tark.domain.{Interaction, Prompt}
 import com.tark.domain.memory.EpisodeSummary
 import com.tark.domain.tool.OpenAIMessage
-import com.tark.ports.outbound.backend.{LlmClient, Prompt}
+import com.tark.ports.outbound.backend.{LlmClient}
 import com.tark.ports.outbound.memory.{EpisodicMemorySummarizer, MemoryPrompt}
 
 /**

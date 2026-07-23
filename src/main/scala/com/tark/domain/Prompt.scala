@@ -1,3 +1,8 @@
 package com.tark.domain
 
-case class Prompt()
+import com.tark.domain.tool.{OpenAIMessage, ToolDefinition}
+
+case class Prompt(
+                   messages: List[OpenAIMessage],
+                   availableTools: List[ToolDefinition]
+                 )

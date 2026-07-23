@@ -2,12 +2,11 @@ package com.tark.adapters.backend.ollama
 
 import cats.effect.Sync
 import cats.syntax.all.*
-import com.tark.domain.GoalContract
-import com.tark.ports.outbound.backend.{GoalContractParser, GoalContractPrompt, LlmClient, Prompt}
+import com.tark.domain.{GoalContract, Prompt}
+import com.tark.ports.outbound.backend.{GoalContractParser, GoalContractPrompt, LlmClient}
 import com.tark.ports.outbound.backend.GoalContractPrompt.given
 import com.tark.domain.tool.OpenAIMessage
 import com.tark.ports.shared.serialization.Deserializable
-
 import com.tark.domain.errors.IntakeError
 
 /**

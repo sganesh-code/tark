@@ -1,7 +1,7 @@
 package com.tark.ports.outbound.backend
 
 import cats.implicits.catsSyntaxSemigroup
-import com.tark.domain.AgentState
+import com.tark.domain.{AgentState, Prompt}
 import com.tark.domain.memory.{EpisodicMemory, Memory, ProceduralMemory}
 import com.tark.domain.tool.OpenAIMessage
 

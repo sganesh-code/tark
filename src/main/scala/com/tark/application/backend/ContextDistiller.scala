@@ -2,9 +2,10 @@ package com.tark.application.backend
 
 import cats.effect.Sync
 import cats.syntax.all.*
+import com.tark.domain.Prompt
 import com.tark.domain.context.Context
 import com.tark.domain.tool.{OpenAIMessage, ToolCall}
-import com.tark.ports.outbound.backend.{LlmClient, Prompt}
+import com.tark.ports.outbound.backend.LlmClient
 
 class ContextDistiller[F[_]: Sync](llmClient: LlmClient[F]) {
 

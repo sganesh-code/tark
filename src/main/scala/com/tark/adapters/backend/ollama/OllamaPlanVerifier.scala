@@ -2,8 +2,8 @@ package com.tark.adapters.backend.ollama
 
 import cats.effect.Sync
 import cats.syntax.all.*
-import com.tark.domain.GoalContract
-import com.tark.ports.outbound.backend.{LlmClient, Prompt, PlanVerifier, PlanVerifierPrompt}
+import com.tark.domain.{GoalContract, Prompt}
+import com.tark.ports.outbound.backend.{LlmClient, PlanVerifier, PlanVerifierPrompt}
 import com.tark.domain.tool.OpenAIMessage
 import com.tark.ports.shared.serialization.Deserializable
 

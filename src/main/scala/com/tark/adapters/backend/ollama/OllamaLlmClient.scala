@@ -1,9 +1,10 @@
 package com.tark.adapters.backend.ollama
 
 import cats.effect.IO
+import com.tark.domain.Prompt
 import com.tark.domain.tool.*
 import com.tark.domain.tool.{OpenAIRequest, OpenAIResponse, ToolCall}
-import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, Prompt, StreamingLlmClient}
+import com.tark.ports.outbound.backend.{LLMResponse, LlmClient, LlmStreamEvent, StreamingLlmClient}
 import fs2.Stream
 import fs2.text
 import io.circe.Decoder

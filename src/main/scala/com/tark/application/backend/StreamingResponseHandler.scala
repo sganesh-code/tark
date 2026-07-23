@@ -2,7 +2,7 @@ package com.tark.application.backend
 
 import cats.effect.{Ref, Sync}
 import cats.syntax.all.*
-import com.tark.domain.Config
+import com.tark.domain.{Config, Prompt}
 import com.tark.domain.tool.{OpenAIUsage, ToolCall}
 import com.tark.ports.outbound.backend.*
 import com.tark.ui.AgentAction

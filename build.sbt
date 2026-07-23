@@ -22,6 +22,7 @@ lazy val root = rootProject
       "com.softwaremill.sttp.client3" %% "async-http-client-backend-fs2" % "3.10.3",
       "io.circe" %% "circe-generic" % "0.14.9",
        "org.jline" % "jline" % "4.3.1",
-       "org.jline" % "jline-prompt" % "4.3.1"
+       "org.jline" % "jline-prompt" % "4.3.1",
+      "io.modelcontextprotocol.sdk" % "mcp" % "2.0.0"
     )
   )
