@@ -54,14 +54,16 @@ object ToolCallExecutor {
     }
   }
 
-  given mcpToolCallExecutor[F[_]: Sync]: ToolCallExecutor[F, McpToolDefinition] with {
+  given mcpToolCallExecutor[F[_]: Sync](using mcpRegistry: com.tark.ports.outbound.mcp.McpRegistry[F]): ToolCallExecutor[F, McpToolDefinition] with {
     override def execute(
       tool: McpToolDefinition,
       context: Context,
       toolCall: ToolCall,
       resultRef: Ref[F, Option[ToolResult]]
     ): Stream[F, AgentAction[F]] = {
-      Stream.eval(resultRef.set(Some(ToolResult(s"MCP call to '${toolCall.function.name}' executed successfully via McpToolDefinition dispatch.")))).drain
+      Stream.eval(
+        mcpRegistry.callTool(tool.name, toolCall.function.arguments).flatMap(res => resultRef.set(Some(res)))
+      ).drain
     }
   }
 

@@ -14,6 +14,12 @@ import com.tark.ui.AgentAction
 import munit.FunSuite
 
 class ReActLoopEngineSpec extends FunSuite {
+  given com.tark.ports.outbound.mcp.McpRegistry[IO] with {
+    override def getTools = IO.pure(List.empty)
+    override def callTool(toolName: String, argumentsJson: String) =
+      IO.pure(com.tark.domain.tool.ToolResult(s"Mock result for $toolName"))
+  }
+
   test("ReActLoopEngine runs a simple conversation with final answer directly") {
     val usageRef = Ref.unsafe[IO, OpenAIUsage](OpenAIUsage(0, 0, 0))
     

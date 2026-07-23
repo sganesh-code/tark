@@ -276,6 +276,7 @@ object DefaultAgentBackend {
     taskPlanner: TaskPlanner[F, GoalContract],
     planVerifier: PlanVerifier[F, GoalContract],
     progressTracker: ProgressTracker[F],
+    mcpRegistry: com.tark.ports.outbound.mcp.McpRegistry[F],
     config: Config
   ): F[DefaultAgentBackend[F]] =
     for {
@@ -298,6 +299,7 @@ object DefaultAgentBackend {
     taskPlanner: TaskPlanner[F, GoalContract],
     planVerifier: PlanVerifier[F, GoalContract],
     progressTracker: ProgressTracker[F],
+    mcpRegistry: com.tark.ports.outbound.mcp.McpRegistry[F],
     config: Config
   ): F[DefaultAgentBackend[F]] = {
     given StreamingLlmClient[F] = StreamingLlmClient.fromBuffered(llmClient)

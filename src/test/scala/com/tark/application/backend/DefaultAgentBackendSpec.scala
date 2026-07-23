@@ -23,6 +23,12 @@ import java.nio.file.Path
 import scala.collection.mutable.ArrayBuffer
 
 class DefaultAgentBackendSpec extends FunSuite {
+  given com.tark.ports.outbound.mcp.McpRegistry[IO] with {
+    override def getTools = IO.pure(List.empty)
+    override def callTool(toolName: String, argumentsJson: String) =
+      IO.pure(com.tark.domain.tool.ToolResult(s"Mock result for $toolName"))
+  }
+
   given com.tark.domain.Config = com.tark.domain.Config.default
 
   given GoalContractParser[IO] with {
