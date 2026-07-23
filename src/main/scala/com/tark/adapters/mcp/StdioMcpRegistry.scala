@@ -83,6 +83,9 @@ object StdioMcpRegistry {
 
                 val mapper = io.modelcontextprotocol.json.McpJsonDefaults.getMapper()
                 val transport = new StdioClientTransport(params, mapper)
+                transport.setStdErrorHandler { line =>
+                  System.err.println(s"[$serverName stderr] $line")
+                }
                 val client = JavaMcpClient.sync(transport)
                   .requestTimeout(Duration.ofSeconds(10))
                   .build()
