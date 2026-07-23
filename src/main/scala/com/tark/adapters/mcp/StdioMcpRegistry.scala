@@ -126,10 +126,10 @@ object StdioMcpRegistry {
 
               case McpServer.Remote(transportType, url) =>
                 val lowerType = transportType.toLowerCase
-                if (lowerType == "sse" || lowerType == "http") {
-                  println(s"[INFO] Connecting to remote SSE MCP server: '$serverName' ($url)")
+                if (lowerType == "http") {
+                  println(s"[INFO] Connecting to remote HTTP MCP server: '$serverName' ($url)")
                   val mapper = io.modelcontextprotocol.json.McpJsonDefaults.getMapper()
-                  val transport = io.modelcontextprotocol.client.transport.HttpClientSseClientTransport.builder(url).build()
+                  val transport = io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport.builder(url).build()
                   val client = JavaMcpClient.sync(transport)
                     .requestTimeout(Duration.ofSeconds(15))
                     .build()
