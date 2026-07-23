@@ -2,14 +2,49 @@ package com.tark.bootstrap
 
 import cats.effect.IO
 import com.tark.domain.Config
+import com.tark.domain.mcp.McpServers
 
-case class RuntimeConfig(config: Config, forceBuild: Boolean)
+case class RuntimeConfig(
+  config: Config,
+  forceBuild: Boolean,
+  mcpServers: McpServers = McpServers(Map.empty)
+)
 
 object RuntimeConfig {
   val DefaultForceBuild = false
 
   def fromEnvironment: IO[RuntimeConfig] =
-    IO(sys.env).map(fromEnv)
+    for {
+      env <- IO(sys.env)
+      base = fromEnv(env)
+      mcp <- loadMcpServers
+    } yield base.copy(mcpServers = mcp)
+
+  private def loadMcpServers: IO[McpServers] = IO {
+    import io.circe.parser.decode
+    import java.nio.file.{Files, Paths}
+    val path = Paths.get(".tark", "settings.json")
+    if (Files.exists(path)) {
+      val content = Files.readString(path)
+      decode[McpServers](content) match {
+        case Right(servers) =>
+          if (servers.mcpServers.nonEmpty) {
+            println(s"[INFO] Loaded MCP server registrations: ${servers.mcpServers.keys.mkString(", ")}")
+          }
+          servers
+        case Left(error) =>
+          System.err.println(s"[WARN] Failed to parse .tark/settings.json: $error")
+          McpServers(Map.empty)
+      }
+    } else {
+      McpServers(Map.empty)
+    }
+  }.handleErrorWith { error =>
+    IO {
+      System.err.println(s"[WARN] Error reading .tark/settings.json: ${error.getMessage}")
+      McpServers(Map.empty)
+    }
+  }
 
   def fromEnv(env: Map[String, String]): RuntimeConfig = {
     val config = Config(
